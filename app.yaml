@@ -1,1 +1,10 @@
-command: ["sh", "-c", "pip install -r server/requirements.txt && uvicorn server.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8080}"]
+command:
+  - sh
+  - -c
+  - "cd server && npm install && node server.js"
+env:
+  - name: DATABRICKS_HOST
+    value: "<your-databricks-workspace-host>"
+  - name: DATABRICKS_HTTP_PATH
+    value: "<your-sql-warehouse-http-path>"
+  # DATABRICKS_TOKEN is injected automatically by Databricks Apps at runtime

@@ -1,0 +1,16 @@
+{
+  "closedDay": 15,
+  "responseHrs": 4,
+  "emailsDay": 20,
+  "maxOnHold": 30,
+  "maxOpen": 100,
+  "transferRate": 10,
+  "availPct": 55,
+  "prodPct": 70,
+  "contactsHr": 6,
+  "slaBreach": 24,
+  "instascore": 75,
+  "fcrPct": 80,
+  "totalPending": 500,
+  "avgHoldSec": 120
+}

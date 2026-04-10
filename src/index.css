@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* Homebase brand — dark purple-tinted surfaces */
+  --color-bg:       #0c0a12;
+  --color-surface:  #151120;
+  --color-surface2: #1c1729;
+  --color-border:   #2e2545;
+  --color-accent:   #7e3dd4;   /* Homebase primary purple */
+  --color-warn:     #f5a623;
+  --color-danger:   #e05c5c;
+  --color-success:  #38d9a9;
+  --color-text:     #ede9f8;   /* warm white with purple tint */
+  --color-muted:    #7b6d99;   /* purple-tinted muted */
+  --font-mono: 'DM Mono', monospace;
+  --font-sans: 'DM Sans', sans-serif;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  text-align: left;
+  border: none;
+  display: block;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+
+/* Chart.js canvas */
+canvas { display: block; }
+
+/* White calendar icon on date inputs */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
+}

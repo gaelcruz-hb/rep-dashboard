@@ -3,6 +3,13 @@ command:
   - -c
   - "cd server && npm install && node server.js"
 env:
+  - name: DATABRICKS_HOST
+    value: "homebase-staging.cloud.databricks.com"
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/16984dfe9a2c3705"
-  # DATABRICKS_HOST and DATABRICKS_TOKEN are auto-injected by Databricks Apps at runtime
+resources:
+  - name: "sql-warehouse"
+    description: "SQL Warehouse for rep dashboard queries"
+    sql_warehouse:
+      id: "16984dfe9a2c3705"
+      permission: "CAN_USE"

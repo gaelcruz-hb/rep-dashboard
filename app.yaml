@@ -3,8 +3,6 @@ command:
   - -c
   - "cd server && npm install && node server.js"
 env:
-  - name: DATABRICKS_HOST
-    value: "<your-databricks-workspace-host>"
   - name: DATABRICKS_HTTP_PATH
-    value: "<your-sql-warehouse-http-path>"
-  # DATABRICKS_TOKEN is injected automatically by Databricks Apps at runtime
+    value: "/sql/1.0/warehouses/<your-warehouse-id>"
+  # DATABRICKS_HOST and DATABRICKS_TOKEN are auto-injected by Databricks Apps at runtime

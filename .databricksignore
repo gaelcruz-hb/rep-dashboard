@@ -1,0 +1,24 @@
+# Dependencies — installed at runtime by npm install
+node_modules/
+server/node_modules/
+
+# React source — already compiled into dist/ by npm run build
+src/
+public/
+index.html
+vite.config.js
+eslint.config.js
+package.json
+package-lock.json
+
+# Git & local config
+.git/
+.gitignore
+*.local
+.env
+server/.env
+
+# Misc
+README.md
+deploy.sh
+dist-ssr/

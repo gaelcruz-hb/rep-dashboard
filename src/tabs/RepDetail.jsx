@@ -151,11 +151,12 @@ export function RepDetail() {
   });
 
   const sortedCases = [...parsedCases].sort((a, b) => {
-    // Hot cases always float to top regardless of sort
-    if (a.hot && !b.hot) return -1;
-    if (!a.hot && b.hot) return 1;
-    const av = a[sortCol] ?? '';
-    const bv = b[sortCol] ?? '';
+    const av = a[sortCol] ?? null;
+    const bv = b[sortCol] ?? null;
+    // Nulls always sort to the bottom
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
     const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av - bv);
     return sortDir === 'asc' ? cmp : -cmp;
   });

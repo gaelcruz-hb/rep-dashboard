@@ -73,6 +73,18 @@ function LoadingRow() {
 export function RepDetail() {
   const { selectedRep, setSelectedRep, repFilter, goals, periodFilter, customRangeMode, customStartDate, customEndDate } = useDashboard();
   const [caseFilter, setCaseFilter] = useState('all');
+  const [sortCol, setSortCol]       = useState('ageDays');
+  const [sortDir, setSortDir]       = useState('desc');
+
+  function toggleSort(col) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('desc'); }
+  }
+
+  function SortArrow({ col }) {
+    if (sortCol !== col) return <span className="ml-1 text-border">↕</span>;
+    return <span className="ml-1 text-accent">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  }
 
   // Rep list from manager data (has id + name + metrics)
   const { data: mgrRaw, loading: mgrLoading } = useManagerData();
@@ -136,15 +148,21 @@ export function RepDetail() {
         : null,
       hot: Math.round((now - created) / 86400000) > 90,
     };
-  }).sort((a, b) => {
+  });
+
+  const sortedCases = [...parsedCases].sort((a, b) => {
+    // Hot cases always float to top regardless of sort
     if (a.hot && !b.hot) return -1;
     if (!a.hot && b.hot) return 1;
-    return b.ageDays - a.ageDays;
+    const av = a[sortCol] ?? '';
+    const bv = b[sortCol] ?? '';
+    const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av - bv);
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
   const filteredCases = caseFilter === 'all'
-    ? parsedCases
-    : parsedCases.filter(c => c.status === caseFilter);
+    ? sortedCases
+    : sortedCases.filter(c => c.status === caseFilter);
 
   // Dynamic period labels
   const PERIOD_LABEL = {
@@ -244,8 +262,21 @@ export function RepDetail() {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {['Case #', 'Subject', 'Status', 'Age', 'Last Activity', 'Response'].map(h => (
-                  <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                {[
+                  { label: 'Case #',         col: 'caseNum'     },
+                  { label: 'Subject',         col: 'subject'     },
+                  { label: 'Status',          col: 'status'      },
+                  { label: 'Age',             col: 'ageDays'     },
+                  { label: 'Last Activity',   col: 'lastActDays' },
+                  { label: 'Response',        col: 'responseHrs' },
+                ].map(({ label, col }) => (
+                  <th
+                    key={col}
+                    onClick={() => toggleSort(col)}
+                    className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap cursor-pointer hover:text-text select-none"
+                  >
+                    {label}<SortArrow col={col} />
+                  </th>
                 ))}
               </tr>
             </thead>

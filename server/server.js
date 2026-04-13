@@ -14,6 +14,15 @@ const app = express();
 const PORT = process.env.DATABRICKS_APP_PORT || process.env.PORT || 3001;
 const isDev = !process.env.DATABRICKS_APP_PORT;
 
+// Startup diagnostics — shows which Databricks env vars are present
+console.log('[ENV]', {
+  DATABRICKS_HOST:      process.env.DATABRICKS_HOST      ? 'SET' : 'MISSING',
+  DATABRICKS_HTTP_PATH: process.env.DATABRICKS_HTTP_PATH ? 'SET' : 'MISSING',
+  DATABRICKS_TOKEN:     process.env.DATABRICKS_TOKEN     ? 'SET' : 'MISSING',
+  DATABRICKS_APP_PORT:  process.env.DATABRICKS_APP_PORT  ? 'SET' : 'MISSING',
+  ALL_DATABRICKS_VARS:  Object.keys(process.env).filter(k => k.startsWith('DATABRICKS')),
+});
+
 if (isDev) {
   app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174"] }));
 }

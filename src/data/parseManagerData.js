@@ -56,7 +56,9 @@ export function parseManagerData(raw) {
   }
 
   // ── Build flat reps array ─────────────────────────────────────────────────────
+  // Seed from userInfo so reps with zero activity still appear in the list
   const allIds = new Set([
+    ...Object.keys(userMeta),
     ...Object.keys(repOpenMap),
     ...Object.keys(closedWeekMap),
     ...Object.keys(avgRespMap),

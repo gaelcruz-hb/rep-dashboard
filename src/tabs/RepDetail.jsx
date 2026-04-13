@@ -171,7 +171,7 @@ export function RepDetail() {
     week: 'This Week', last_week: 'Last Week',
     month: 'This Month', last_month: 'Last Month',
   };
-  const PRIOR_LABEL = { today: 'Yesterday', week: 'Last Week', month: 'Last Month' };
+  const PRIOR_LABEL = { today: 'Yesterday', week: 'Last Week', last_week: 'Week Before', month: 'Last Month', last_month: '2 Months Ago' };
   const periodLabel = customRangeMode && customStartDate && customEndDate
     ? `${customStartDate} – ${customEndDate}`
     : (PERIOD_LABEL[periodFilter] ?? 'This Week');

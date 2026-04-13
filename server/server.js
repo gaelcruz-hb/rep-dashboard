@@ -141,9 +141,15 @@ function priorClosedClause(period) {
     case 'week':
       return `DATE(closeddate) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7)
               AND DATE(closeddate) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_week':
+      return `DATE(closeddate) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -14)
+              AND DATE(closeddate) < DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7)`;
     case 'month':
       return `DATE(closeddate) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))
               AND DATE(closeddate) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(closeddate) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -2))
+              AND DATE(closeddate) < DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))`;
     default:
       return null;
   }

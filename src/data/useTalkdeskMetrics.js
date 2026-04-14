@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { cacheGet, cacheSet } from './cache.js';
+import { apiFetch } from './apiFetch.js';
 import { useDashboard } from '../context/DashboardContext';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -35,7 +36,7 @@ export function useTalkdeskMetrics() {
       const cached = !bypassCache ? cacheGet(cacheKey) : null;
       if (cached) { setRaw(cached); setLoading(false); }
       try {
-        const res = await fetch(`${API_URL}/api/talkdesk-metrics?${params.toString()}`, { signal: controller.signal });
+        const res = await apiFetch(`${API_URL}/api/talkdesk-metrics?${params.toString()}`, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         // Server cache still warming up — retry in 15s rather than waiting the full poll interval

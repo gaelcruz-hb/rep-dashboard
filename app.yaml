@@ -7,6 +7,9 @@ env:
     value: "homebase-staging.cloud.databricks.com"
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/16984dfe9a2c3705"
+  - name: DATABRICKS_OAUTH_CLIENT_ID
+    value: "50d0aebd-5c5d-4265-a1da-2d071a3d9392"
+  # DATABRICKS_APP_URL, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET auto-injected at runtime
 resources:
   - name: "sql-warehouse"
     description: "SQL Warehouse for rep dashboard queries"

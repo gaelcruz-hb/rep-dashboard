@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { cacheGet, cacheSet } from './cache.js';
+import { apiFetch } from './apiFetch.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -26,7 +27,7 @@ export function useRepDetail(ownerId, period = 'week', startDate, endDate) {
       params.set('period', period);
     }
 
-    fetch(`${API_URL}/api/rep-detail?${params.toString()}`, { signal: controller.signal })
+    apiFetch(`${API_URL}/api/rep-detail?${params.toString()}`, { signal: controller.signal })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(raw => { cacheSet(cacheKey, raw); setData(raw); setError(null); })
       .catch(err => {

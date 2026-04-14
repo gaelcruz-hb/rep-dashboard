@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { cacheGet, cacheSet } from './cache.js';
+import { apiFetch } from './apiFetch.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -28,7 +29,7 @@ export function useVolumeData({ manager, ownerIds, period, startDate, endDate } 
       const cached = !bypassCache ? cacheGet(cacheKey) : null;
       if (cached) { setData(cached); setLoading(false); }
       try {
-        const res = await fetch(url, { signal: controller.signal });
+        const res = await apiFetch(url, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const raw = await res.json();
         cacheSet(cacheKey, raw);

@@ -19,11 +19,14 @@ if (isDev) {
 }
 app.use(express.json());
 
-// Pick up the user's OAuth token forwarded by Databricks Apps on every request.
-// This lets queries run as the authenticated user instead of the service principal,
-// bypassing the need to grant CAN_USE to the app's service principal.
+// Extract the user's OAuth token from each request (either forwarded by Databricks
+// Apps or sent by the frontend as Authorization: Bearer <token>).
 app.use((req, _res, next) => {
-  const token = req.headers['x-forwarded-access-token'];
+  const forwarded = req.headers['x-forwarded-access-token'];
+  const bearer    = req.headers['authorization']?.startsWith('Bearer ')
+    ? req.headers['authorization'].slice(7)
+    : null;
+  const token = forwarded || bearer;
   if (token) setUserToken(token);
   next();
 });
@@ -529,6 +532,50 @@ app.post("/api/goals", (req, res) => {
     console.error("❌ [Goals] Write error:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── GET /api/auth/config — returns OAuth config for PKCE login ─────────────────
+app.get('/api/auth/config', (_req, res) => {
+  res.json({
+    host:        process.env.DATABRICKS_HOST,
+    clientId:    process.env.DATABRICKS_OAUTH_CLIENT_ID,
+    redirectUri: process.env.DATABRICKS_APP_URL || 'http://localhost:5173',
+  });
+});
+
+// ── POST /api/auth/token — exchanges PKCE code for access token ─────────────────
+app.post('/api/auth/token', async (req, res) => {
+  const { code, codeVerifier, redirectUri } = req.body;
+  const host = process.env.DATABRICKS_HOST;
+  try {
+    const resp = await fetch(`https://${host}/oidc/v1/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'authorization_code',
+        client_id:     process.env.DATABRICKS_OAUTH_CLIENT_ID,
+        code,
+        code_verifier: codeVerifier,
+        redirect_uri:  redirectUri,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(data);
+    res.json({ access_token: data.access_token, expires_in: data.expires_in });
+  } catch (err) {
+    console.error('❌ [auth/token]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /debug/headers — temporary, shows what Databricks forwards ─────────────
+app.get("/debug/headers", (req, res) => {
+  const relevant = Object.fromEntries(
+    Object.entries(req.headers).filter(([k]) =>
+      k.includes('auth') || k.includes('token') || k.includes('databricks') || k.includes('forward')
+    )
+  );
+  res.json({ relevant, all: Object.keys(req.headers) });
 });
 
 // ── GET /health ────────────────────────────────────────────────────────────────

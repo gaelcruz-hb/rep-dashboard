@@ -23,7 +23,7 @@ export function useCasesData({ period, startDate, endDate, manager, ownerId, own
 
     const fetchData = async () => {
       try {
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const raw = await res.json();
         setData(raw);

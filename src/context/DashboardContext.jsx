@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { REPS_DATA, DEFAULT_GOALS } from '../data/mockData';
 import { ORG, MANAGERS, TEAMS, ALL_REPS, getActiveMembers } from '../data/orgData';
+import { apiFetch } from '../data/apiFetch.js';
 
 const DashboardContext = createContext(null);
 
@@ -35,7 +36,7 @@ export function DashboardProvider({ children }) {
   const [repList, setRepList]         = useState([]);
 
   useEffect(() => {
-    fetch('/api/goals')
+    apiFetch('/api/goals')
       .then(r => r.json())
       .then(data => setGoals(data))
       .catch(() => {});
@@ -43,7 +44,7 @@ export function DashboardProvider({ children }) {
 
   useEffect(() => {
     const loadRepList = (isRetry = false) => {
-      fetch('/api/rep-list')
+      apiFetch('/api/rep-list')
         .then(r => r.json())
         .then(data => {
           const reps = (data.records ?? [])

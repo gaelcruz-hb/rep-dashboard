@@ -10,6 +10,15 @@ const client = new DBSQLClient();
 let _connection = null;
 let _m2mToken   = null;
 let _m2mExpiry  = 0;
+let _userToken  = null;
+
+// Called by server middleware on each request to keep the token current.
+export function setUserToken(token) {
+  if (token && token !== _userToken) {
+    _userToken  = token;
+    _connection = null; // reconnect with the updated token
+  }
+}
 
 async function getM2MToken(host) {
   // Return cached token if still valid (with 60s buffer)
@@ -37,10 +46,13 @@ async function getM2MToken(host) {
 }
 
 async function getToken(host) {
-  // Option 1: static token (local dev via server/.env)
+  // Option 1: user OAuth token forwarded by Databricks Apps (preferred — runs as the user)
+  if (_userToken) return _userToken;
+
+  // Option 2: static token (local dev via server/.env)
   if (process.env.DATABRICKS_TOKEN) return process.env.DATABRICKS_TOKEN;
 
-  // Option 2: M2M OAuth — auto-injected by Databricks Apps at runtime
+  // Option 3: M2M OAuth via service principal (fallback)
   if (process.env.DATABRICKS_CLIENT_ID && process.env.DATABRICKS_CLIENT_SECRET) {
     return getM2MToken(host);
   }
@@ -88,6 +100,7 @@ export async function query(sql) {
         console.warn("[Databricks] Auth failure (403) — resetting and retrying...");
         _connection = null;
         _m2mToken   = null;
+        _userToken  = null;
         continue;
       }
       throw err;

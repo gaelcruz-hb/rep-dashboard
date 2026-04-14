@@ -8,7 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
-import { query } from "./databricksClient.js";
+import { query, setUserToken } from "./databricksClient.js";
 
 const app = express();
 const PORT = process.env.DATABRICKS_APP_PORT || process.env.PORT || 3001;
@@ -18,6 +18,15 @@ if (isDev) {
   app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174"] }));
 }
 app.use(express.json());
+
+// Pick up the user's OAuth token forwarded by Databricks Apps on every request.
+// This lets queries run as the authenticated user instead of the service principal,
+// bypassing the need to grant CAN_USE to the app's service principal.
+app.use((req, _res, next) => {
+  const token = req.headers['x-forwarded-access-token'];
+  if (token) setUserToken(token);
+  next();
+});
 
 // Serve the built frontend in production (Databricks Apps)
 if (!isDev) {

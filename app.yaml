@@ -1,14 +1,12 @@
 command:
   - sh
   - -c
-  - "cd server && npm install && node server.js"
+  - "export HOME=/tmp && cd server && npm install && node server.js"
 env:
   - name: DATABRICKS_HOST
     value: "homebase-staging.cloud.databricks.com"
   - name: DATABRICKS_HTTP_PATH
     value: "/sql/1.0/warehouses/16984dfe9a2c3705"
-  - name: HOME
-    value: "/tmp"
   # DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET auto-injected at runtime by Databricks Apps
 resources:
   - name: "sql-warehouse"

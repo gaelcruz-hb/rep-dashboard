@@ -1,0 +1,10 @@
+resources:
+  apps:
+    rep_dashboard:
+      name: cs-rep-dashboard
+      description: "HB Support — Rep Activity Dashboard"
+      git_source:
+        branch: "main"
+        git_repository:
+          url: "https://github.com/gaelcruz-hb/rep-dashboard.git"
+          provider: "gitHub"

@@ -7,7 +7,7 @@ import { DBSQLClient } from "@databricks/sql";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 
-let client = new DBSQLClient();
+let client = null;
 let _connection       = null;
 let _connectionExpiry = Infinity;
 let _m2mToken         = null;
@@ -85,6 +85,8 @@ async function getToken(host) {
 }
 
 async function getConnection() {
+  if (!client) client = new DBSQLClient();
+
   if (_connection && Date.now() > _connectionExpiry - 5 * 60_000) {
     console.log('[Databricks] Token expiring soon — reconnecting proactively...');
     await client.close().catch(() => {});

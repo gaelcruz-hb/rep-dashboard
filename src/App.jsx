@@ -10,8 +10,7 @@ import { VolumeInflow }    from './tabs/VolumeInflow';
 import { Channels }        from './tabs/Channels';
 import { ManagerScorecard }from './tabs/ManagerScorecard';
 import { RepDetail }       from './tabs/RepDetail';
-import { useAuth }         from './auth/useAuth';
-import { LoginScreen }     from './auth/LoginScreen';
+import { Diagnostics }     from './tabs/Diagnostics';
 
 const TAB_MAP = {
   overview:    Overview,
@@ -21,6 +20,7 @@ const TAB_MAP = {
   channels:    Channels,
   manager:     ManagerScorecard,
   rep:         RepDetail,
+  diagnostics: Diagnostics,
 };
 
 function Dashboard() {
@@ -41,20 +41,6 @@ function Dashboard() {
 }
 
 export default function App() {
-  const { authenticated, loading, error, login } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-bg flex items-center justify-center">
-        <div className="text-muted text-xs font-mono animate-pulse">Authenticating…</div>
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return <LoginScreen onLogin={login} error={error} />;
-  }
-
   return (
     <DashboardProvider>
       <Dashboard />

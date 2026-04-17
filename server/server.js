@@ -8,7 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
-import { query, setUserToken } from "./databricksClient.js";
+import { query, getDiagnostics, resetConnection } from "./databricksClient.js";
 
 const app = express();
 const PORT = process.env.DATABRICKS_APP_PORT || process.env.PORT || 3001;
@@ -18,18 +18,6 @@ if (isDev) {
   app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174"] }));
 }
 app.use(express.json());
-
-// Extract the user's OAuth token from each request (either forwarded by Databricks
-// Apps or sent by the frontend as Authorization: Bearer <token>).
-app.use((req, _res, next) => {
-  const forwarded = req.headers['x-forwarded-access-token'];
-  const bearer    = req.headers['authorization']?.startsWith('Bearer ')
-    ? req.headers['authorization'].slice(7)
-    : null;
-  const token = forwarded || bearer;
-  if (token) setUserToken(token);
-  next();
-});
 
 // Serve the built frontend in production (Databricks Apps)
 if (!isDev) {
@@ -141,7 +129,7 @@ app.get("/api/overview-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [overview-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -226,7 +214,7 @@ app.get("/api/rep-detail", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -267,7 +255,7 @@ app.get("/api/cases-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [cases-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -315,7 +303,7 @@ app.get("/api/volume-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [volume-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -349,7 +337,7 @@ app.get("/api/sla-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [sla-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -401,7 +389,7 @@ app.get("/api/resolution-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [resolution-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -447,7 +435,7 @@ app.get("/api/manager-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [manager-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -483,7 +471,7 @@ app.get("/api/channels-data", async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [channels-data]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -525,57 +513,48 @@ app.get("/api/goals", (_req, res) => {
 });
 
 app.post("/api/goals", (req, res) => {
+  const validated = {};
+  for (const key of Object.keys(DEFAULT_GOALS)) {
+    const val = req.body[key];
+    if (typeof val === 'number' && isFinite(val)) validated[key] = val;
+  }
+  if (Object.keys(validated).length === 0) {
+    return res.status(400).json({ error: 'Invalid goals payload' });
+  }
   try {
-    fs.writeFileSync(GOALS_FILE, JSON.stringify(req.body, null, 2), "utf8");
+    fs.writeFileSync(GOALS_FILE, JSON.stringify(validated, null, 2), "utf8");
     res.json({ ok: true });
   } catch (err) {
     console.error("❌ [Goals] Write error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// ── GET /api/auth/config — returns OAuth config for PKCE login ─────────────────
-app.get('/api/auth/config', (_req, res) => {
-  res.json({
-    host:        process.env.DATABRICKS_HOST,
-    clientId:    process.env.DATABRICKS_OAUTH_CLIENT_ID,
-    redirectUri: process.env.DATABRICKS_APP_URL || 'http://localhost:5173',
+// ── GET /debug/headers — dev only ─────────────────────────────────────────────
+if (isDev) {
+  app.get("/debug/headers", (req, res) => {
+    const relevant = Object.fromEntries(
+      Object.entries(req.headers).filter(([k]) =>
+        k.includes('auth') || k.includes('token') || k.includes('databricks') || k.includes('forward')
+      )
+    );
+    res.json({ relevant, all: Object.keys(req.headers) });
   });
+}
+
+// ── GET /api/diagnostics ───────────────────────────────────────────────────────
+app.get('/api/diagnostics', (_req, res) => {
+  res.json(getDiagnostics());
 });
 
-// ── POST /api/auth/token — exchanges PKCE code for access token ─────────────────
-app.post('/api/auth/token', async (req, res) => {
-  const { code, codeVerifier, redirectUri } = req.body;
-  const host = process.env.DATABRICKS_HOST;
+// ── POST /api/reconnect ────────────────────────────────────────────────────────
+app.post('/api/reconnect', async (_req, res) => {
   try {
-    const resp = await fetch(`https://${host}/oidc/v1/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'authorization_code',
-        client_id:     process.env.DATABRICKS_OAUTH_CLIENT_ID,
-        code,
-        code_verifier: codeVerifier,
-        redirect_uri:  redirectUri,
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) return res.status(resp.status).json(data);
-    res.json({ access_token: data.access_token, expires_in: data.expires_in });
+    await resetConnection();
+    res.json({ ok: true, diagnostics: getDiagnostics() });
   } catch (err) {
-    console.error('❌ [auth/token]', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ ok: false, error: err.message, diagnostics: getDiagnostics() });
   }
-});
-
-// ── GET /debug/headers — temporary, shows what Databricks forwards ─────────────
-app.get("/debug/headers", (req, res) => {
-  const relevant = Object.fromEntries(
-    Object.entries(req.headers).filter(([k]) =>
-      k.includes('auth') || k.includes('token') || k.includes('databricks') || k.includes('forward')
-    )
-  );
-  res.json({ relevant, all: Object.keys(req.headers) });
 });
 
 // ── GET /health ────────────────────────────────────────────────────────────────

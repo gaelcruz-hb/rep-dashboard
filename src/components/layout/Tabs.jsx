@@ -8,6 +8,7 @@ const TABS = [
   { id: 'channels',    label: 'Channels' },
   { id: 'manager',     label: '⭐ Manager Scorecard' },
   { id: 'rep',         label: 'Rep Detail' },
+  { id: 'diagnostics', label: '⚡ Diagnostics' },
 ];
 
 export function Tabs() {

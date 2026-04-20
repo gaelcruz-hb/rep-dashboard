@@ -195,7 +195,7 @@ export function RepDetail() {
     { label: `Closed ${periodLabel}`,     value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
       note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
     { label: 'Avg Response',              value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true,  unit: 'h', goalUnit: 'h',
-      note: isEarlyPeriod && avgResponseHrs === 0 ? earlyPeriodNote : null },
+      note: isEarlyPeriod && avgResponseHrs === 0 ? earlyPeriodNote : avgResponseHrs === 0 ? null : 'avg of cases with a response only' },
   ];
 
   return (
@@ -331,7 +331,14 @@ export function RepDetail() {
                       {c.lastActDays}d ago
                     </td>
                     <td className={`px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap ${respColor}`}>
-                      {c.responseHrs != null ? `${c.responseHrs}h` : '—'}
+                      {c.responseHrs != null
+                        ? `${c.responseHrs}h`
+                        : (
+                          <span title="Client has not yet responded to this ticket" className="cursor-help text-muted">
+                            — <span className="text-[9px] italic">pending</span>
+                          </span>
+                        )
+                      }
                     </td>
                   </tr>
                 );

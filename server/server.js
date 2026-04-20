@@ -191,9 +191,15 @@ app.get("/api/rep-detail", async (req, res) => {
              FROM ${CASE}
              WHERE is_current = true AND satisfaction_score__c IS NOT NULL ${owId}
              GROUP BY ownerid`),
+      // 5. Avg response time across ALL cases (open + closed) created in period
+      query(`SELECT AVG(CAST(case_response_time_hours__c AS DOUBLE)) AS avg_hrs_all
+             FROM ${CASE}
+             WHERE is_current = true
+             AND DATE(createddate) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}
+             AND case_response_time_hours__c IS NOT NULL ${owId}`),
     ];
 
-    // 5. Prior period closed count — only when a comparison exists
+    // 6. Prior period closed count — only when a comparison exists
     if (hasPrior) {
       queries.push(
         query(`SELECT COUNT(*) AS cnt FROM ${CASE}
@@ -202,15 +208,16 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
-    const [cases, closedRow, avgRespRow, csatRows, priorRow] = await Promise.all(queries);
+    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, priorRow] = await Promise.all(queries);
 
     res.json({
-      cases:            { records: cases },
-      closedPeriod:     Number(closedRow[0]?.cnt ?? 0),
-      closedPriorPeriod: hasPrior ? Number(priorRow[0]?.cnt ?? 0) : 0,
+      cases:              { records: cases },
+      closedPeriod:       Number(closedRow[0]?.cnt ?? 0),
+      closedPriorPeriod:  hasPrior ? Number(priorRow[0]?.cnt ?? 0) : 0,
       hasPrior,
-      avgResponseHrs:   Number(avgRespRow[0]?.avg_hrs ?? 0),
-      csatData:         { records: csatRows },
+      avgResponseHrs:     Number(avgRespRow[0]?.avg_hrs ?? 0),
+      avgResponseHrsAll:  avgRespAllRow[0]?.avg_hrs_all != null ? Number(avgRespAllRow[0].avg_hrs_all) : null,
+      csatData:           { records: csatRows },
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);

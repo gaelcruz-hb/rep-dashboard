@@ -125,6 +125,9 @@ export function RepDetail() {
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
+  const avgResponseHrsAll = detail?.avgResponseHrsAll != null
+    ? parseFloat(detail.avgResponseHrsAll.toFixed(1))
+    : null;
 
   // Instascore from CSAT records
   const csatScores = (detail?.csatData?.records ?? [])
@@ -195,7 +198,13 @@ export function RepDetail() {
     { label: `Closed ${periodLabel}`,     value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
       note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
     { label: 'Avg Response',              value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true,  unit: 'h', goalUnit: 'h',
-      note: isEarlyPeriod && avgResponseHrs === 0 ? earlyPeriodNote : avgResponseHrs === 0 ? null : 'avg of cases with a response only' },
+      note: isEarlyPeriod && avgResponseHrs === 0
+        ? earlyPeriodNote
+        : avgResponseHrs === 0 && avgResponseHrsAll != null
+          ? `No closed avg — ${avgResponseHrsAll}h incl. open cases`
+          : avgResponseHrsAll != null
+            ? `${avgResponseHrsAll}h incl. open cases`
+            : null },
   ];
 
   return (

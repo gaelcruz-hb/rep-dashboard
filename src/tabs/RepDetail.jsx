@@ -19,7 +19,7 @@ function findManagerForRep(repName) {
 const SF_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Case/';
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
-function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = false }) {
+function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = false, note = null }) {
   const numVal  = parseFloat(value);
   const numGoal = parseFloat(goal);
   const isGood  = lower ? numVal <= numGoal : numVal >= numGoal;
@@ -40,6 +40,9 @@ function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = fals
       <div className={`text-[10px] font-mono mt-1 ${textColor}`}>
         {isGood ? '✓ On track' : '✗ Below goal'}
       </div>
+      {note && (
+        <div className="text-[10px] text-muted italic mt-1 leading-tight">{note}</div>
+      )}
     </div>
   );
 }
@@ -183,11 +186,16 @@ export function RepDetail() {
   const wowStr = wow == null ? '—' : wow > 0 ? `+${wow}` : `${wow}`;
 
   // KPI metrics — WFM fields (availPct, prodTimePct, contactsHr, fcrPct) are not in SF
+  const isEarlyPeriod = periodFilter === 'today' || periodFilter === 'week';
+  const earlyPeriodNote = 'No closed cases yet — expected early in the period';
+
   const metrics = [
     { label: 'Open Cases',                value: rep.openCases,             goal: goals.maxOpen,       lower: true  },
     { label: 'On Hold',                   value: rep.holdCases,             goal: goals.maxOnHold,     lower: true  },
-    { label: `Closed ${periodLabel}`,     value: closedPeriod,              goal: goals.closedDay * 5, lower: false },
-    { label: 'Avg Response',              value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true,  unit: 'h', goalUnit: 'h' },
+    { label: `Closed ${periodLabel}`,     value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
+      note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
+    { label: 'Avg Response',              value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true,  unit: 'h', goalUnit: 'h',
+      note: isEarlyPeriod && avgResponseHrs === 0 ? earlyPeriodNote : null },
   ];
 
   return (

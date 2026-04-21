@@ -179,14 +179,30 @@ export function ManagerScorecard() {
     },
   };
 
-  const allReps = managers.flatMap(m => m.reps);
-  const closedData = {
+  const isSingleManager = managerFilter !== 'all';
+
+  // All managers: one aggregate bar per manager
+  const closedDataAggregate = {
     labels: mgrLabels,
+    datasets: [{
+      label: closedLabel,
+      data: managers.map(m => m.totalClosed),
+      backgroundColor: managers.map(m => m.totalClosed >= goals.closedDay * 5 * m.headcount
+        ? 'rgba(56,217,169,0.7)'
+        : 'rgba(224,92,92,0.7)'),
+      borderRadius: 4,
+    }],
+  };
+
+  // Single manager: stacked by rep + goal line
+  const selectedManager = managers[0];
+  const closedDataStacked = {
+    labels: selectedManager ? [selectedManager.name] : [],
     datasets: [
-      ...allReps.map((rep, i) => ({
+      ...(selectedManager?.reps ?? []).map((rep, i) => ({
         type: 'bar',
         label: rep.name,
-        data: managers.map(m => m.reps.find(r => r.name === rep.name)?.closedWeek ?? 0),
+        data: [rep.closedWeek],
         backgroundColor: STACK_COLORS[i % STACK_COLORS.length],
         stack: 'reps',
         borderWidth: 0,
@@ -194,11 +210,11 @@ export function ManagerScorecard() {
       {
         type: 'line',
         label: 'Team Goal',
-        data: managers.map(m => goals.closedDay * 5 * m.headcount),
+        data: selectedManager ? [goals.closedDay * 5 * selectedManager.headcount] : [],
         borderColor: 'rgba(255,255,255,0.5)',
         borderWidth: 2,
         borderDash: [5, 4],
-        pointRadius: 3,
+        pointRadius: 4,
         pointBackgroundColor: 'rgba(255,255,255,0.5)',
         fill: false,
         tension: 0,
@@ -206,6 +222,9 @@ export function ManagerScorecard() {
       },
     ],
   };
+
+  const closedData    = isSingleManager ? closedDataStacked    : closedDataAggregate;
+  const closedChartOpt = isSingleManager ? stackedClosedOpt : noLegendOpt;
 
   const openData = {
     labels: mgrLabels,
@@ -297,7 +316,7 @@ export function ManagerScorecard() {
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Card>
           <CardHeader title={`${closedLabel} — by Manager`} />
-          <CardBody><div style={{ height: 280 }}><Bar key={`closed-${mgrLabels.join('-')}`} data={closedData} options={stackedClosedOpt} /></div></CardBody>
+          <CardBody><div style={{ height: isSingleManager ? 280 : 200 }}><Bar key={`closed-${managerFilter}`} data={closedData} options={closedChartOpt} /></div></CardBody>
         </Card>
         <Card>
           <CardHeader title="Open vs On Hold — by Manager" />

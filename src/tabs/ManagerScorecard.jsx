@@ -244,7 +244,8 @@ export function ManagerScorecard() {
     ],
   };
 
-  const responseData = {
+  // All managers: one bar per manager, color-coded by goal
+  const responseDataAggregate = {
     labels: mgrLabels,
     datasets: [{
       label: 'Avg Response (hrs)',
@@ -253,6 +254,45 @@ export function ManagerScorecard() {
       borderRadius: 4,
     }],
   };
+
+  // Single manager: one bar per rep + avg line overlay
+  const responseDataByRep = {
+    labels: (selectedManager?.reps ?? []).map(r => r.name),
+    datasets: [
+      {
+        type: 'bar',
+        label: 'Avg Response (hrs)',
+        data: (selectedManager?.reps ?? []).map(r => r.avgResponseHrs > 0 ? parseFloat(r.avgResponseHrs.toFixed(1)) : null),
+        backgroundColor: (selectedManager?.reps ?? []).map(r =>
+          r.avgResponseHrs > 0 && r.avgResponseHrs <= goals.responseHrs
+            ? 'rgba(56,217,169,0.65)'
+            : r.avgResponseHrs > 0
+              ? 'rgba(224,92,92,0.65)'
+              : 'rgba(80,80,80,0.3)'),
+        borderRadius: 4,
+        skipNull: true,
+      },
+      {
+        type: 'line',
+        label: 'Team Avg',
+        data: selectedManager
+          ? Array((selectedManager.reps ?? []).length).fill(parseFloat(selectedManager.avgResponseFiltered?.toFixed(1) ?? selectedManager.avgResponse.toFixed(1)))
+          : [],
+        borderColor: 'rgba(255,255,255,0.55)',
+        borderWidth: 2,
+        borderDash: [5, 4],
+        pointRadius: 0,
+        fill: false,
+        tension: 0,
+        order: -1,
+      },
+    ],
+  };
+
+  const responseData    = isSingleManager ? responseDataByRep    : responseDataAggregate;
+  const responseChartOpt = isSingleManager
+    ? { ...CHART_OPT, plugins: { ...CHART_OPT.plugins, legend: { display: true, labels: { color: '#6b7280', font: { size: 9 }, boxWidth: 24 } } } }
+    : noLegendOpt;
 
   // holdChartData removed — Talkdesk data only
   // const holdChartData = { ... };
@@ -325,8 +365,8 @@ export function ManagerScorecard() {
       </div>
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Card>
-          <CardHeader title="Avg Response Time — by Manager" subtitle="Hours — green ≤ goal" />
-          <CardBody><div style={{ height: 200 }}><Bar data={responseData} options={noLegendOpt} /></div></CardBody>
+          <CardHeader title={isSingleManager ? `Avg Response — ${selectedManager?.name}'s Team` : 'Avg Response Time — by Manager'} subtitle="Hours — green ≤ goal" />
+          <CardBody><div style={{ height: isSingleManager ? 220 : 200 }}><Bar key={`resp-${managerFilter}`} data={responseData} options={responseChartOpt} /></div></CardBody>
         </Card>
         {/* Avg Hold Time chart removed — Talkdesk data only */}
       </div>

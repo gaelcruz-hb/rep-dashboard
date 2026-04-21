@@ -46,11 +46,6 @@ function StatBox({ value, label, color }) {
   );
 }
 
-function trendColor(trend) {
-  if (trend?.startsWith('↑')) return 'text-success';
-  if (trend?.startsWith('↓')) return 'text-danger';
-  return 'text-muted';
-}
 
 function LoadingCard({ h = 200 }) {
   return <div className="bg-surface border border-border rounded-[10px] animate-pulse" style={{ height: h }} />;
@@ -209,7 +204,6 @@ export function ManagerScorecard() {
   const coachingRows = COACHING_DATA.filter(c =>
     managerFilter === 'all' || c.manager === managerFilter
   );
-  const plansRows = coachingRows.filter(c => c.onPlan);
 
   return (
     <div>
@@ -353,7 +347,7 @@ export function ManagerScorecard() {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {['Rep', 'Manager', 'Last Coached', 'Sessions This Wk', 'Docs Complete', 'On Plan', 'Trend'].map(h => (
+                {['Rep', 'Manager', 'Last Coached'].map(h => (
                   <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -368,20 +362,6 @@ export function ManagerScorecard() {
                     <td className={`px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap ${lastCoachColor}`}>
                       {c.lastCoached}d ago{c.lastCoached > 7 ? ' ⚠' : ''}
                     </td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-text whitespace-nowrap">{c.sessionsThisWeek}</td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">
-                      {c.coachingDocsComplete
-                        ? <span className="text-success">✓ Done</span>
-                        : <span className="text-danger">✗ Missing</span>
-                      }
-                    </td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">
-                      {c.onPlan
-                        ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium font-mono bg-warn/15 text-warn">Yes</span>
-                        : <span className="text-muted">No</span>
-                      }
-                    </td>
-                    <td className={`px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap ${trendColor(c.trend)}`}>{c.trend}</td>
                   </tr>
                 );
               })}
@@ -390,49 +370,6 @@ export function ManagerScorecard() {
         </div>
       </Card>
 
-      {/* ── Reps on Improvement Plans (mock data) ── */}
-      <SectionHeader title="Reps on Improvement Plans (Mock Data)" />
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                {['Rep', 'Manager', 'Plan Status', 'Week', 'Trend', 'Action'].map(h => (
-                  <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {plansRows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-5 text-center text-muted text-xs">No reps currently on improvement plans</td>
-                </tr>
-              ) : plansRows.map(c => {
-                const statusCls = c.planStatus === 'Active' ? 'bg-warn/15 text-warn'
-                  : c.planStatus === 'Completed' ? 'bg-success/15 text-success'
-                  : 'bg-danger/15 text-danger';
-                const action = c.planStatus === 'At Risk'
-                  ? <span className="text-danger text-[11px] font-semibold">⚠ Escalate to MC</span>
-                  : c.planStatus === 'Completed'
-                  ? <span className="text-success text-[11px]">✓ Assess fit</span>
-                  : <span className="text-muted text-[11px]">Continue plan</span>;
-                return (
-                  <tr key={c.name} className="hover:bg-surface2 transition-colors">
-                    <td className="px-3 py-2 text-xs border-b border-border/50 text-text whitespace-nowrap">{c.name}</td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 text-muted whitespace-nowrap">{c.manager}</td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium font-mono ${statusCls}`}>{c.planStatus}</span>
-                    </td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-text whitespace-nowrap">Week {c.planWeek} of 6</td>
-                    <td className={`px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap ${trendColor(c.trend)}`}>{c.trend}</td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">{action}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
     </div>
   );
 }

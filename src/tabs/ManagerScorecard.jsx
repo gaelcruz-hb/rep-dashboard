@@ -4,7 +4,6 @@ import { useDashboard } from '../context/DashboardContext';
 import { useManagerData } from '../data/useManagerData';
 import { parseManagerData } from '../data/parseManagerData';
 import { ORG, getActiveMembers } from '../data/orgData';
-import { COACHING_DATA } from '../data/mockData';
 import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card';
 
 // const API_URL = import.meta.env.VITE_API_URL || ''; // removed with Talkdesk
@@ -200,9 +199,9 @@ export function ManagerScorecard() {
   // holdChartData removed — Talkdesk data only
   // const holdChartData = { ... };
 
-  // ── Coaching data (sample — no SF equivalent) ──────────────────────────────────
-  const coachingRows = COACHING_DATA.filter(c =>
-    managerFilter === 'all' || c.manager === managerFilter
+  // ── Coaching rows — built from real SF rep data; lastCoached has no data source
+  const coachingRows = managers.flatMap(m =>
+    m.reps.map(r => ({ name: r.name, manager: m.name, lastCoached: null }))
   );
 
   return (
@@ -338,8 +337,8 @@ export function ManagerScorecard() {
         ))}
       </div>
 
-      {/* ── Coaching & Accountability Tracker (mock data) ── */}
-      <SectionHeader title="Coaching & Accountability Tracker (Mock Data)">
+      {/* ── Coaching & Accountability Tracker ── */}
+      <SectionHeader title="Coaching & Accountability Tracker">
         <span className="text-[11px] text-muted">Week of {displayWeek}</span>
       </SectionHeader>
       <Card className="mb-5">
@@ -353,18 +352,13 @@ export function ManagerScorecard() {
               </tr>
             </thead>
             <tbody>
-              {coachingRows.map(c => {
-                const lastCoachColor = c.lastCoached <= 3 ? 'text-success' : c.lastCoached <= 7 ? 'text-warn' : 'text-danger';
-                return (
-                  <tr key={c.name} className="hover:bg-surface2 transition-colors">
-                    <td className="px-3 py-2 text-xs border-b border-border/50 text-text whitespace-nowrap">{c.name}</td>
-                    <td className="px-3 py-2 text-xs border-b border-border/50 text-muted whitespace-nowrap">{c.manager}</td>
-                    <td className={`px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap ${lastCoachColor}`}>
-                      {c.lastCoached}d ago{c.lastCoached > 7 ? ' ⚠' : ''}
-                    </td>
-                  </tr>
-                );
-              })}
+              {coachingRows.map(c => (
+                <tr key={c.name} className="hover:bg-surface2 transition-colors">
+                  <td className="px-3 py-2 text-xs border-b border-border/50 text-text whitespace-nowrap">{c.name}</td>
+                  <td className="px-3 py-2 text-xs border-b border-border/50 text-muted whitespace-nowrap">{c.manager}</td>
+                  <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">—</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

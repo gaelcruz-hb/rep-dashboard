@@ -196,6 +196,11 @@ export function ManagerScorecard() {
 
   // Single manager: stacked by rep + goal line
   const selectedManager = managers[0];
+  const closedGoal = selectedManager ? goals.closedDay * 5 * selectedManager.headcount : 0;
+  const closedYMax = selectedManager
+    ? Math.ceil(Math.max(selectedManager.totalClosed * 1.3, 10) / 10) * 10
+    : undefined;
+
   const closedDataStacked = {
     labels: selectedManager ? [selectedManager.name] : [],
     datasets: [
@@ -209,8 +214,8 @@ export function ManagerScorecard() {
       })),
       {
         type: 'line',
-        label: 'Team Goal',
-        data: selectedManager ? [goals.closedDay * 5 * selectedManager.headcount] : [],
+        label: `Team Goal (${closedGoal})`,
+        data: selectedManager ? [Math.min(closedGoal, closedYMax)] : [],
         borderColor: 'rgba(255,255,255,0.5)',
         borderWidth: 2,
         borderDash: [5, 4],
@@ -223,8 +228,16 @@ export function ManagerScorecard() {
     ],
   };
 
-  const closedData    = isSingleManager ? closedDataStacked    : closedDataAggregate;
-  const closedChartOpt = isSingleManager ? stackedClosedOpt : noLegendOpt;
+  const stackedClosedOptDynamic = {
+    ...stackedClosedOpt,
+    scales: {
+      ...stackedClosedOpt.scales,
+      y: { ...stackedClosedOpt.scales.y, max: closedYMax },
+    },
+  };
+
+  const closedData     = isSingleManager ? closedDataStacked      : closedDataAggregate;
+  const closedChartOpt = isSingleManager ? stackedClosedOptDynamic : noLegendOpt;
 
   const openData = {
     labels: mgrLabels,

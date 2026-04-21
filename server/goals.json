@@ -1,6 +1,6 @@
 {
   "closedDay": 15,
-  "responseHrs": 4,
+  "responseHrs": 24,
   "emailsDay": 20,
   "maxOnHold": 30,
   "maxOpen": 100,

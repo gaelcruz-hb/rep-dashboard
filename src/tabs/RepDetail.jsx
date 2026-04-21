@@ -266,6 +266,10 @@ export function RepDetail() {
   const activeCases   = filteredCases.filter(c => !archivedIds.has(c.sfId));
   const archivedCases = parsedCases.filter(c => archivedIds.has(c.sfId));
 
+  // Adjust open/hold counts to exclude archived cases
+  const adjOpenCases = Math.max(0, rep.openCases - archivedCases.length);
+  const adjHoldCases = Math.max(0, rep.holdCases - archivedCases.filter(c => c.status === 'On Hold').length);
+
   const PERIOD_LABEL = {
     today: 'Today', yesterday: 'Yesterday',
     week: 'This Week', last_week: 'Last Week',
@@ -285,8 +289,8 @@ export function RepDetail() {
   const earlyPeriodNote = 'No closed cases yet — expected early in the period';
 
   const metrics = [
-    { label: 'Open Cases',            value: rep.openCases,             goal: goals.maxOpen,       lower: true  },
-    { label: 'On Hold',               value: rep.holdCases,             goal: goals.maxOnHold,     lower: true  },
+    { label: 'Open Cases',            value: adjOpenCases,              goal: goals.maxOpen,       lower: true  },
+    { label: 'On Hold',               value: adjHoldCases,              goal: goals.maxOnHold,     lower: true  },
     { label: `Closed ${periodLabel}`, value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
       note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
     { label: 'Avg Response',          value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true, unit: 'h', goalUnit: 'h',

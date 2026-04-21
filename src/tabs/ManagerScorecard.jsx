@@ -1,4 +1,5 @@
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend } from 'chart.js';
+import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { Bar } from 'react-chartjs-2';
 import { useDashboard } from '../context/DashboardContext';
 import { useManagerData } from '../data/useManagerData';
@@ -8,13 +9,14 @@ import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card
 
 // const API_URL = import.meta.env.VITE_API_URL || ''; // removed with Talkdesk
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ChartDataLabels);
 
 const CHART_OPT = {
   responsive: true, maintainAspectRatio: false,
   plugins: {
     legend: { display: true, labels: { color: '#7b6d99', font: { size: 10 } } },
     tooltip: { backgroundColor: '#1c1729', titleColor: '#ede9f8', bodyColor: '#7b6d99', borderColor: '#2e2545', borderWidth: 1 },
+    datalabels: { display: false },
   },
   scales: {
     x: { grid: { color: '#2e2545' }, ticks: { color: '#7b6d99', font: { size: 10 } } },
@@ -171,6 +173,15 @@ export function ManagerScorecard() {
           filter: item => item.text === 'Team Goal',
           boxWidth: 24,
         },
+      },
+      datalabels: {
+        display: ctx => ctx.dataset.type !== 'line' && ctx.parsed.y > 0,
+        color: '#fff',
+        font: { size: 9, weight: 'bold' },
+        formatter: v => v,
+        anchor: 'center',
+        align: 'center',
+        clamp: true,
       },
     },
     scales: {

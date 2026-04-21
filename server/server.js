@@ -26,9 +26,10 @@ if (!isDev) {
 }
 
 // ── Table refs ─────────────────────────────────────────────────────────────────
-const CASE = 'Prod_redshift_replica.bizops_staging.crm_case';
-const USER = 'Prod_redshift_replica.bizops_staging.crm_user';
-const TD   = 'Prod_redshift_replica.bizops_staging.talkdesk_fact_calls';
+const CASE    = 'Prod_redshift_replica.bizops_staging.crm_case';
+const USER    = 'Prod_redshift_replica.bizops_staging.crm_user';
+const TD      = 'Prod_redshift_replica.bizops_staging.talkdesk_fact_calls';
+const ARCHIVE = 'business_users.csops.rep_dashboard_archived_cases';
 
 // ── SQL helpers ────────────────────────────────────────────────────────────────
 const DATE_TRUNC = {
@@ -498,6 +499,59 @@ app.get("/api/rep-list", async (_req, res) => {
   }
 });
 
+// ── Archive cases ──────────────────────────────────────────────────────────────
+async function ensureArchiveTable() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS ${ARCHIVE} (
+        case_id     STRING NOT NULL,
+        rep_id      STRING NOT NULL,
+        archived_at TIMESTAMP
+      )
+    `);
+    console.log('✅ [archive] Table ready');
+  } catch (err) {
+    console.error('❌ [archive] Table init failed:', err.message);
+  }
+}
+
+app.get('/api/archived-cases/:repId', async (req, res) => {
+  const { repId } = req.params;
+  if (!SFID_RE.test(repId)) return res.status(400).json({ error: 'valid repId required' });
+  try {
+    const rows = await query(`SELECT case_id FROM ${ARCHIVE} WHERE rep_id = '${repId}'`);
+    res.json({ ids: rows.map(r => r.case_id) });
+  } catch (err) {
+    console.error('❌ [archived-cases]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/archive-case', async (req, res) => {
+  const { caseId, repId } = req.body ?? {};
+  if (!SFID_RE.test(caseId) || !SFID_RE.test(repId))
+    return res.status(400).json({ error: 'valid caseId and repId required' });
+  try {
+    await query(`INSERT INTO ${ARCHIVE} (case_id, rep_id, archived_at) VALUES ('${caseId}', '${repId}', CURRENT_TIMESTAMP())`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ [archive-case POST]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/archive-case/:caseId', async (req, res) => {
+  const { caseId } = req.params;
+  if (!SFID_RE.test(caseId)) return res.status(400).json({ error: 'valid caseId required' });
+  try {
+    await query(`DELETE FROM ${ARCHIVE} WHERE case_id = '${caseId}'`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ [archive-case DELETE]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Goals persistence ──────────────────────────────────────────────────────────
 const GOALS_FILE = path.resolve(__dirname, "goals.json");
 
@@ -577,4 +631,5 @@ if (!isDev) {
 // ── Start ──────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Rep Dashboard server running on http://localhost:${PORT}`);
+  ensureArchiveTable();
 });

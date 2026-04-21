@@ -276,7 +276,7 @@ export function ManagerScorecard() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr>
-                    {['Rep', closedLabel.replace('Cases Closed ', ''), 'Response', 'On Hold', 'Open'].map(h => (
+                    {['Rep', closedLabel.replace('Cases ', ''), 'Response', 'On Hold', 'Open'].map(h => (
                       <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                     ))}
                   </tr>

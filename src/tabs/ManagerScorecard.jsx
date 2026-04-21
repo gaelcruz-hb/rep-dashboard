@@ -151,14 +151,60 @@ export function ManagerScorecard() {
   const noLegendOpt = { ...CHART_OPT, plugins: { ...CHART_OPT.plugins, legend: { display: false } } };
   const mgrLabels   = managers.map(m => m.name);
 
+  const STACK_COLORS = [
+    'rgba(91,138,245,0.8)',  'rgba(56,217,169,0.8)',  'rgba(245,166,35,0.8)',
+    'rgba(224,92,92,0.8)',   'rgba(126,61,212,0.8)',   'rgba(100,200,255,0.8)',
+    'rgba(255,150,100,0.8)', 'rgba(200,100,255,0.8)',  'rgba(100,255,150,0.8)',
+    'rgba(255,100,150,0.8)', 'rgba(50,200,200,0.8)',   'rgba(200,150,50,0.8)',
+    'rgba(150,100,255,0.8)', 'rgba(255,200,100,0.8)',  'rgba(100,150,200,0.8)',
+  ];
+
+  const stackedClosedOpt = {
+    ...CHART_OPT,
+    plugins: {
+      ...CHART_OPT.plugins,
+      legend: {
+        display: true,
+        labels: {
+          color: '#6b7280',
+          font: { size: 9 },
+          filter: item => item.text === 'Team Goal',
+          boxWidth: 24,
+        },
+      },
+    },
+    scales: {
+      x: { ...CHART_OPT.scales.x, stacked: true },
+      y: { ...CHART_OPT.scales.y, stacked: true },
+    },
+  };
+
+  const allReps = managers.flatMap(m => m.reps);
   const closedData = {
     labels: mgrLabels,
-    datasets: [{
-      label: closedLabel,
-      data: managers.map(m => m.totalClosed),
-      backgroundColor: managers.map((_, i) => i === 0 ? 'rgba(126,61,212,0.7)' : 'rgba(56,217,169,0.7)'),
-      borderRadius: 4,
-    }],
+    datasets: [
+      ...allReps.map((rep, i) => ({
+        type: 'bar',
+        label: rep.name,
+        data: managers.map(m => m.reps.find(r => r.name === rep.name)?.closedWeek ?? 0),
+        backgroundColor: STACK_COLORS[i % STACK_COLORS.length],
+        stack: 'reps',
+        borderWidth: 0,
+      })),
+      {
+        type: 'line',
+        label: 'Team Goal',
+        data: managers.map(m => goals.closedDay * 5 * m.headcount),
+        borderColor: 'rgba(255,255,255,0.5)',
+        borderWidth: 2,
+        borderDash: [5, 4],
+        pointRadius: 3,
+        pointBackgroundColor: 'rgba(255,255,255,0.5)',
+        fill: false,
+        tension: 0,
+        order: -1,
+      },
+    ],
   };
 
   const openData = {
@@ -251,7 +297,7 @@ export function ManagerScorecard() {
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Card>
           <CardHeader title={`${closedLabel} — by Manager`} />
-          <CardBody><div style={{ height: 200 }}><Bar data={closedData} options={noLegendOpt} /></div></CardBody>
+          <CardBody><div style={{ height: 280 }}><Bar data={closedData} options={stackedClosedOpt} /></div></CardBody>
         </Card>
         <Card>
           <CardHeader title="Open vs On Hold — by Manager" />

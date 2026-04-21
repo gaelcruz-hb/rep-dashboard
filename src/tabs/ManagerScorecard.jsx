@@ -73,15 +73,18 @@ function buildManagers(sfRepByName) {
 
 function aggregateManager(name, reps) {
   const n = reps.length;
+  const repsWithResp = reps.filter(r => r.avgResponseHrs > 0);
   return {
     name,
     reps,
-    headcount:   n,
-    avgResponse: n ? parseFloat((reps.reduce((s, r) => s + r.avgResponseHrs, 0) / n).toFixed(2)) : 0,
+    headcount:           n,
+    avgResponse:         n ? parseFloat((reps.reduce((s, r) => s + r.avgResponseHrs, 0) / n).toFixed(2)) : 0,
+    avgResponseFiltered: repsWithResp.length
+      ? parseFloat((repsWithResp.reduce((s, r) => s + r.avgResponseHrs, 0) / repsWithResp.length).toFixed(2))
+      : null,
     totalClosed: reps.reduce((s, r) => s + r.closedWeek, 0),
     totalOnHold: reps.reduce((s, r) => s + r.holdCases,  0),
     totalOpen:   reps.reduce((s, r) => s + r.openCases,  0),
-    // avgHoldSec and avgAvailPct removed — Talkdesk data only
   };
 }
 
@@ -255,7 +258,10 @@ export function ManagerScorecard() {
               </div>
 
               <CardBody>
-                <MetricRow label="Avg Response Time"  value={`${m.avgResponse.toFixed(1)}h`}  isGood={m.avgResponse <= goals.responseHrs} />
+                <MetricRow label="Avg Response Time"    value={`${m.avgResponse.toFixed(1)}h`}           isGood={m.avgResponse <= goals.responseHrs} />
+                {m.avgResponseFiltered != null && (
+                  <MetricRow label="Avg Resp (w/ data)" value={`${m.avgResponseFiltered.toFixed(1)}h`}  isGood={m.avgResponseFiltered <= goals.responseHrs} />
+                )}
                 <MetricRow label={closedLabel}         value={m.totalClosed}                    isGood={m.totalClosed >= goals.closedDay * 5 * m.headcount} />
                 <MetricRow label="Total Open Cases"   value={m.totalOpen}                      isGood={true} />
                 <MetricRow label="Total On Hold"      value={m.totalOnHold}                    isGood={m.totalOnHold <= goals.maxOnHold * m.headcount} />

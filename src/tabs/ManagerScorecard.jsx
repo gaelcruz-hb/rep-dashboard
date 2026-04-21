@@ -11,6 +11,8 @@ import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend);
 
+const STACKED_PLUGINS = [ChartDataLabels];
+
 const CHART_OPT = {
   responsive: true, maintainAspectRatio: false,
   plugins: {
@@ -307,7 +309,7 @@ export function ManagerScorecard() {
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Card>
           <CardHeader title={`${closedLabel} — by Manager`} />
-          <CardBody><div style={{ height: 280 }}><Bar data={closedData} options={stackedClosedOpt} plugins={[ChartDataLabels]} /></div></CardBody>
+          <CardBody><div style={{ height: 280 }}><Bar data={closedData} options={stackedClosedOpt} plugins={STACKED_PLUGINS} /></div></CardBody>
         </Card>
         <Card>
           <CardHeader title="Open vs On Hold — by Manager" />

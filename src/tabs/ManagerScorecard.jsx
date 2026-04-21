@@ -36,14 +36,6 @@ function MetricRow({ label, value, isGood }) {
   );
 }
 
-function StatBox({ value, label, color }) {
-  return (
-    <div className="flex-1 bg-surface2 rounded-lg p-2.5 text-center">
-      <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
-      <div className="text-[10px] text-muted mt-0.5">{label}</div>
-    </div>
-  );
-}
 
 
 function LoadingCard({ h = 200 }) {
@@ -155,9 +147,7 @@ export function ManagerScorecard() {
       .filter(Boolean);
   }
 
-  const scoreColor = n => n >= 2 ? 'text-success' : n >= 1 ? 'text-warn' : 'text-danger';
-
-  // ── Charts ─────────────────────────────────────────────────────────────────────
+// ── Charts ─────────────────────────────────────────────────────────────────────
   const noLegendOpt = { ...CHART_OPT, plugins: { ...CHART_OPT.plugins, legend: { display: false } } };
   const mgrLabels   = managers.map(m => m.name);
 
@@ -232,29 +222,11 @@ export function ManagerScorecard() {
 
       {/* ── Manager cards ── */}
       <div className="grid grid-cols-2 gap-4 mb-5">
-        {managers.map(m => {
-          const goalsMet = [
-            m.avgResponse <= goals.responseHrs,
-            m.totalClosed >= goals.closedDay * 5 * m.headcount,
-          ].filter(Boolean).length;
-          const repsAtGoal    = m.reps.filter(r => r.closedWeek >= goals.closedDay * 5).length;
-          const repsBelowGoal = m.headcount - repsAtGoal;
-
-          return (
+        {managers.map(m => (
             <Card key={m.name}>
-              <div className="bg-surface2 px-4 py-3 border-b border-border flex items-center justify-between">
-                <div>
-                  <div className="text-[15px] font-semibold text-text">{m.name}</div>
-                  <div className="text-[10px] text-muted font-mono mt-0.5">
-                    {m.headcount} reps · {repsAtGoal} at goal · {repsBelowGoal} below
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-[22px] font-bold font-mono ${scoreColor(goalsMet)}`}>
-                    {goalsMet}/2
-                  </div>
-                  <div className="text-[10px] text-muted">goals met</div>
-                </div>
+              <div className="bg-surface2 px-4 py-3 border-b border-border">
+                <div className="text-[15px] font-semibold text-text">{m.name}</div>
+                <div className="text-[10px] text-muted font-mono mt-0.5">{m.headcount} reps</div>
               </div>
 
               <CardBody>
@@ -269,22 +241,9 @@ export function ManagerScorecard() {
                 {/* {m.avgHoldSec  != null && <MetricRow label="Avg Hold Time"    value={`${m.avgHoldSec}s`}   isGood={m.avgHoldSec  <= goals.avgHoldSec} />} */}
                 {/* {m.avgAvailPct != null && <MetricRow label="Avg Availability" value={`${m.avgAvailPct}%`}  isGood={m.avgAvailPct >= goals.availPct}   />} */}
 
-                <div className="flex gap-2.5 mt-3">
-                  <StatBox
-                    value={repsAtGoal}
-                    label="Reps at Goal"
-                    color={repsAtGoal >= m.headcount * 0.7 ? 'text-success' : 'text-warn'}
-                  />
-                  <StatBox
-                    value={repsBelowGoal}
-                    label="Below Goal"
-                    color={repsBelowGoal === 0 ? 'text-success' : repsBelowGoal <= 2 ? 'text-warn' : 'text-danger'}
-                  />
-                </div>
               </CardBody>
             </Card>
-          );
-        })}
+        ))}
       </div>
 
       {/* ── Team comparison charts ── */}

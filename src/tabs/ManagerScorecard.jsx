@@ -81,7 +81,7 @@ function aggregateManager(name, reps) {
 }
 
 export function ManagerScorecard() {
-  const { mgrWeek, setMgrWeek, goals, managerFilter, filteredRepNames, periodFilter, customRangeMode, customStartDate, customEndDate } = useDashboard();
+  const { mgrWeek, setMgrWeek, goals, managerFilter, filteredRepNames, periodFilter, customRangeMode, customStartDate, customEndDate, setActiveTab, setSelectedRep } = useDashboard();
   const dateProps = customRangeMode ? { startDate: customStartDate, endDate: customEndDate } : { period: periodFilter };
 
   // ── Salesforce data ────────────────────────────────────────────────────────────
@@ -287,7 +287,12 @@ export function ManagerScorecard() {
                     const respOk   = r.avgResponseHrs <= goals.responseHrs;
                     return (
                       <tr key={r.name} className="hover:bg-surface2 transition-colors">
-                        <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap text-text">{r.name}</td>
+                        <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">
+                          <button
+                            onClick={() => { setSelectedRep(r.name); setActiveTab('rep-detail'); }}
+                            className="text-accent hover:underline cursor-pointer font-medium"
+                          >{r.name}</button>
+                        </td>
                         <td className={`px-3 py-2 text-xs border-b border-border/50 font-mono font-semibold whitespace-nowrap ${closedOk ? 'text-success' : 'text-danger'}`}>{r.closedWeek}</td>
                         <td className={`px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap ${respOk ? 'text-success' : 'text-danger'}`}>{r.avgResponseHrs.toFixed(1)}h</td>
                         <td className={`px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap ${r.holdCases > goals.maxOnHold ? 'text-warn' : 'text-muted'}`}>{r.holdCases}</td>

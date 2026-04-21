@@ -9,15 +9,14 @@ import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card
 
 // const API_URL = import.meta.env.VITE_API_URL || ''; // removed with Talkdesk
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend);
-
-const STACKED_PLUGINS = [ChartDataLabels];
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ChartDataLabels);
 
 const CHART_OPT = {
   responsive: true, maintainAspectRatio: false,
   plugins: {
     legend: { display: true, labels: { color: '#7b6d99', font: { size: 10 } } },
     tooltip: { backgroundColor: '#1c1729', titleColor: '#ede9f8', bodyColor: '#7b6d99', borderColor: '#2e2545', borderWidth: 1 },
+    datalabels: { display: false },
   },
   scales: {
     x: { grid: { color: '#2e2545' }, ticks: { color: '#7b6d99', font: { size: 10 } } },
@@ -309,7 +308,7 @@ export function ManagerScorecard() {
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Card>
           <CardHeader title={`${closedLabel} — by Manager`} />
-          <CardBody><div style={{ height: 280 }}><Bar data={closedData} options={stackedClosedOpt} plugins={STACKED_PLUGINS} /></div></CardBody>
+          <CardBody><div style={{ height: 280 }}><Bar key={`closed-${mgrLabels.join('-')}`} data={closedData} options={stackedClosedOpt} /></div></CardBody>
         </Card>
         <Card>
           <CardHeader title="Open vs On Hold — by Manager" />

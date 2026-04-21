@@ -73,6 +73,18 @@ function LoadingRow() {
   );
 }
 
+// ── Toast notification ────────────────────────────────────────────────────────
+function Toast({ message, type }) {
+  const bg = type === 'success' ? 'bg-success/15 border-success/30 text-success' : 'bg-danger/15 border-danger/30 text-danger';
+  const icon = type === 'success' ? '✓' : '✗';
+  return (
+    <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium shadow-lg ${bg}`}>
+      <span className="font-mono">{icon}</span>
+      {message}
+    </div>
+  );
+}
+
 // ── Confirmation modal ────────────────────────────────────────────────────────
 function ConfirmModal({ caseNum, isArchived, onConfirm, onCancel }) {
   return (
@@ -119,6 +131,7 @@ export function RepDetail() {
   const [casesView, setCasesView]     = useState('active');
   const [dropdownId, setDropdownId]   = useState(null); // sfId of row with open ⋮ menu
   const [modalCase, setModalCase]     = useState(null); // { sfId, caseNum, isArchived }
+  const [toast, setToast]             = useState(null); // { message, type }
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -153,6 +166,11 @@ export function RepDetail() {
       .catch(() => {});
   }, [rep?.id]);
 
+  function showToast(message, type) {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  }
+
   async function archiveCase(sfId) {
     setModalCase(null);
     setArchivedIds(prev => new Set([...prev, sfId]));
@@ -162,8 +180,10 @@ export function RepDetail() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caseId: sfId, repId: rep.id }),
       });
+      showToast('Case archived successfully', 'success');
     } catch {
       setArchivedIds(prev => { const s = new Set(prev); s.delete(sfId); return s; });
+      showToast('Failed to archive case — please try again', 'error');
     }
   }
 
@@ -172,8 +192,10 @@ export function RepDetail() {
     setArchivedIds(prev => { const s = new Set(prev); s.delete(sfId); return s; });
     try {
       await apiFetch(`/api/archive-case/${sfId}`, { method: 'DELETE' });
+      showToast('Case restored to active list', 'success');
     } catch {
       setArchivedIds(prev => new Set([...prev, sfId]));
+      showToast('Failed to restore case — please try again', 'error');
     }
   }
 
@@ -360,6 +382,9 @@ export function RepDetail() {
 
   return (
     <div>
+      {/* Toast */}
+      {toast && <Toast message={toast.message} type={toast.type} />}
+
       {/* Confirmation modal */}
       {modalCase && (
         <ConfirmModal

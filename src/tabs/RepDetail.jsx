@@ -129,9 +129,10 @@ export function RepDetail() {
   const [sortDir, setSortDir]         = useState('desc');
   const [archivedIds, setArchivedIds] = useState(new Set());
   const [casesView, setCasesView]     = useState('active');
-  const [dropdownId, setDropdownId]   = useState(null); // sfId of row with open ⋮ menu
-  const [modalCase, setModalCase]     = useState(null); // { sfId, caseNum, isArchived }
-  const [toast, setToast]             = useState(null); // { message, type }
+  const [dropdownId, setDropdownId]       = useState(null);
+  const [modalCase, setModalCase]         = useState(null);
+  const [toast, setToast]                 = useState(null);
+  const [manuallyRestoredIds, setManuallyRestoredIds] = useState(new Set());
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -158,6 +159,7 @@ export function RepDetail() {
   useEffect(() => {
     if (!rep?.id) return;
     setArchivedIds(new Set());
+    setManuallyRestoredIds(new Set());
     setDropdownId(null);
     setModalCase(null);
     apiFetch(`/api/archived-cases/${rep.id}`)
@@ -190,6 +192,7 @@ export function RepDetail() {
   async function unarchiveCase(sfId) {
     setModalCase(null);
     setArchivedIds(prev => { const s = new Set(prev); s.delete(sfId); return s; });
+    setManuallyRestoredIds(prev => new Set([...prev, sfId]));
     try {
       await apiFetch(`/api/archive-case/${sfId}`, { method: 'DELETE' });
       showToast('Case restored to active list', 'success');
@@ -263,8 +266,16 @@ export function RepDetail() {
     ? sortedCases
     : sortedCases.filter(c => c.status === caseFilter);
 
-  const activeCases   = filteredCases.filter(c => !archivedIds.has(c.sfId));
-  const archivedCases = parsedCases.filter(c => archivedIds.has(c.sfId));
+  // Merge manual archives + auto-archive (cases ≥ 365 days old), minus user-restored
+  const effectiveArchivedIds = new Set([
+    ...archivedIds,
+    ...parsedCases
+      .filter(c => c.ageDays >= 365 && !manuallyRestoredIds.has(c.sfId))
+      .map(c => c.sfId),
+  ]);
+
+  const activeCases   = filteredCases.filter(c => !effectiveArchivedIds.has(c.sfId));
+  const archivedCases = parsedCases.filter(c => effectiveArchivedIds.has(c.sfId));
 
   // Adjust open/hold counts to exclude archived cases
   const adjOpenCases = Math.max(0, rep.openCases - archivedCases.length);

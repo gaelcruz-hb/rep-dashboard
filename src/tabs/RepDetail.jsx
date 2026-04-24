@@ -133,6 +133,8 @@ export function RepDetail() {
   const [modalCase, setModalCase]         = useState(null);
   const [toast, setToast]                 = useState(null);
   const [manuallyRestoredIds, setManuallyRestoredIds] = useState(new Set());
+  const [instaData, setInstaData]   = useState(null);
+  const [instaLoading, setInstaLoading] = useState(false);
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -167,6 +169,22 @@ export function RepDetail() {
       .then(data => setArchivedIds(new Set(data.ids ?? [])))
       .catch(() => {});
   }, [rep?.id]);
+
+  useEffect(() => {
+    if (!rep?.id) return;
+    setInstaData(null);
+    setInstaLoading(true);
+    const params = new URLSearchParams({ ownerId: rep.id, period: periodFilter });
+    if (customRangeMode && customStartDate && customEndDate) {
+      params.set('startDate', customStartDate);
+      params.set('endDate', customEndDate);
+    }
+    apiFetch(`/api/instascore?${params}`)
+      .then(r => r.json())
+      .then(data => setInstaData(data))
+      .catch(() => setInstaData(null))
+      .finally(() => setInstaLoading(false));
+  }, [rep?.id, periodFilter, customRangeMode, customStartDate, customEndDate]);
 
   function showToast(message, type) {
     setToast({ message, type });
@@ -304,6 +322,8 @@ export function RepDetail() {
     { label: 'On Hold',               value: adjHoldCases,              goal: goals.maxOnHold,     lower: true  },
     { label: `Closed ${periodLabel}`, value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
       note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
+    { label: 'Instascore',             value: instaLoading ? '…' : (instaData?.overall != null ? instaData.overall : '—'), goal: goals.instascore, unit: '%', goalUnit: '%',
+      note: instaData?.conversationCount > 0 ? `${instaData.conversationCount} conversation${instaData.conversationCount !== 1 ? 's' : ''} scored` : (instaLoading ? null : 'No scored conversations') },
     { label: 'Avg Response',          value: avgResponseHrs.toFixed(1), goal: goals.responseHrs,   lower: true, unit: 'h', goalUnit: 'h',
       note: isEarlyPeriod && avgResponseHrs === 0
         ? earlyPeriodNote
@@ -432,6 +452,50 @@ export function RepDetail() {
       <div className="grid gap-3.5 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
         {metrics.map(m => <RepKpiCard key={m.label} {...m} />)}
       </div>
+
+      {/* Instascore category breakdown */}
+      {instaData?.byCategory?.length > 0 && (
+        <Card className="mb-4">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <div className="text-xs font-semibold text-text">Instascore — Category Breakdown</div>
+            <div className="text-[10px] text-muted font-mono">{instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}</div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Category', 'Score', 'Conversations'].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {instaData.byCategory.map(row => {
+                  const pct = row.avg_pct;
+                  const barColor = pct >= goals.instascore ? 'bg-success' : pct >= goals.instascore * 0.8 ? 'bg-warn' : 'bg-danger';
+                  const textColor = pct >= goals.instascore ? 'text-success' : pct >= goals.instascore * 0.8 ? 'text-warn' : 'text-danger';
+                  return (
+                    <tr key={row.category_id} className="hover:bg-surface2 transition-colors">
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50">{row.category}</td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-24 bg-border rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                          </div>
+                          <span className={`font-mono text-[11px] ${textColor}`}>{pct}%</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted">{row.conversation_count}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {/* WoW card */}
       <Card className="mb-4">

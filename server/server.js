@@ -29,6 +29,9 @@ if (!isDev) {
 const CASE    = 'Prod_redshift_replica.bizops_staging.crm_case';
 const USER    = 'Prod_redshift_replica.bizops_staging.crm_user';
 const TD      = 'Prod_redshift_replica.bizops_staging.talkdesk_fact_calls';
+const LAI_SCORE  = 'prod_raw.level_ai.homebase_instascore';
+const LAI_ASR    = 'prod_raw.level_ai.homebase_level_asr_asrlog';
+const LAI_USER   = 'prod_raw.level_ai.homebase_accounts_user';
 
 // ── SQL helpers ────────────────────────────────────────────────────────────────
 const DATE_TRUNC = {
@@ -495,6 +498,64 @@ app.get("/api/rep-list", async (_req, res) => {
   } catch (err) {
     console.error('❌ [rep-list]', err.message);
     res.json({ records: [] });
+  }
+});
+
+// ── GET /api/instascore ────────────────────────────────────────────────────────
+app.get('/api/instascore', async (req, res) => {
+  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  if (!ownerId || !SFID_RE.test(ownerId))
+    return res.status(400).json({ error: 'valid ownerId required' });
+
+  const periodClause = (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    ? `DATE(asr.CREATED) BETWEEN '${startDate}' AND '${endDate}'`
+    : `DATE(asr.CREATED) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+
+  const baseJoin = `
+    FROM ${LAI_SCORE} ins
+    JOIN ${LAI_ASR}  asr ON asr.ID   = ins.ASR_LOG_ID
+    JOIN ${LAI_USER} u   ON u.ID     = asr.USER_ID
+    JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
+    WHERE sf.id = '${ownerId}'
+      AND sf.is_current = true
+      AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+      AND ${periodClause}
+  `;
+
+  try {
+    const [categoryRows, overallRows] = await Promise.all([
+      query(`
+        SELECT
+          ins.CATEGORY_ID                                      AS category_id,
+          ins.CATEGORY                                         AS category,
+          AVG(CAST(ins.CATEGORY_SCORE_PCNT AS DOUBLE))        AS avg_pct,
+          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
+        ${baseJoin}
+        GROUP BY ins.CATEGORY_ID, ins.CATEGORY
+        ORDER BY ins.CATEGORY
+      `),
+      query(`
+        SELECT
+          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS overall_pct,
+          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
+        ${baseJoin}
+      `),
+    ]);
+
+    const overallRaw = overallRows[0]?.overall_pct;
+    res.json({
+      overall:           overallRaw != null ? Number(Number(overallRaw).toFixed(1)) : null,
+      conversationCount: Number(overallRows[0]?.conversation_count ?? 0),
+      byCategory:        categoryRows.map(r => ({
+        category_id:        r.category_id,
+        category:           r.category,
+        avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
+        conversation_count: Number(r.conversation_count),
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [instascore]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

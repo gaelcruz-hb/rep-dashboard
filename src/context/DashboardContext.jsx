@@ -23,7 +23,7 @@ export function DashboardProvider({ children }) {
     setRepFilterRaw(val);
     if (val !== 'all') setSelectedRep(val);
   }
-  const [periodFilter, setPeriodFilter] = useState('week');
+  const [periodFilter, setPeriodFilter] = useState('last_30');
   const [customRangeMode, setCustomRangeModeRaw] = useState(false);
   const [customStartDate, setCustomStartDate]    = useState('');
   const [customEndDate, setCustomEndDate]        = useState('');

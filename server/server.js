@@ -656,6 +656,83 @@ app.get('/api/diagnostics', (_req, res) => {
   res.json(getDiagnostics());
 });
 
+// ── GET /api/diagnostics/levelai ──────────────────────────────────────────────
+app.get('/api/diagnostics/levelai', async (_req, res) => {
+  async function check(label, fn) {
+    try {
+      const result = await fn();
+      return { label, ok: true, value: result };
+    } catch (err) {
+      return { label, ok: false, error: err.message };
+    }
+  }
+
+  const checks = await Promise.all([
+    check('homebase_instascore accessible', async () => {
+      const r = await query(`SELECT COUNT(*) AS cnt FROM ${LAI_SCORE}`);
+      return `${Number(r[0]?.cnt ?? 0).toLocaleString()} rows`;
+    }),
+    check('homebase_level_asr_asrlog accessible', async () => {
+      const r = await query(`SELECT COUNT(*) AS cnt FROM ${LAI_ASR}`);
+      return `${Number(r[0]?.cnt ?? 0).toLocaleString()} rows`;
+    }),
+    check('homebase_accounts_user accessible', async () => {
+      const r = await query(`SELECT COUNT(*) AS cnt FROM ${LAI_USER}`);
+      return `${Number(r[0]?.cnt ?? 0).toLocaleString()} rows`;
+    }),
+    check('CREATED field sample (date format check)', async () => {
+      const r = await query(`SELECT CREATED FROM ${LAI_ASR} WHERE CREATED IS NOT NULL LIMIT 3`);
+      return r.map(row => row.CREATED).join(' | ') || 'no rows';
+    }),
+    check('Email join — LevelAI ↔ Salesforce users matched', async () => {
+      const r = await query(`
+        SELECT COUNT(DISTINCT u.ID) AS cnt
+        FROM ${LAI_USER} u
+        JOIN ${USER} sf ON LOWER(sf.email) = LOWER(u.EMAIL)
+        WHERE sf.is_current = true AND u.IS_ACTIVE = 'true'
+      `);
+      return `${Number(r[0]?.cnt ?? 0)} agents matched`;
+    }),
+    check('Conversations in last 30 days', async () => {
+      const r = await query(`
+        SELECT COUNT(*) AS cnt FROM ${LAI_ASR}
+        WHERE DATE(CREATED) >= DATE_SUB(CURRENT_DATE(), 30)
+          AND (DELETED IS NULL OR DELETED = 'false')
+      `);
+      return `${Number(r[0]?.cnt ?? 0).toLocaleString()} conversations`;
+    }),
+    check('Instascore records in last 30 days (full join)', async () => {
+      const r = await query(`
+        SELECT COUNT(DISTINCT ins.ASR_LOG_ID) AS cnt
+        FROM ${LAI_SCORE} ins
+        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
+        WHERE DATE(asr.CREATED) >= DATE_SUB(CURRENT_DATE(), 30)
+          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+      `);
+      return `${Number(r[0]?.cnt ?? 0).toLocaleString()} scored conversations`;
+    }),
+    check('Sample matched rep (end-to-end join)', async () => {
+      const r = await query(`
+        SELECT sf.name AS rep_name, COUNT(DISTINCT ins.ASR_LOG_ID) AS scored_convos
+        FROM ${LAI_SCORE} ins
+        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
+        JOIN ${LAI_USER} u  ON u.ID   = asr.USER_ID
+        JOIN ${USER} sf     ON LOWER(sf.email) = LOWER(u.EMAIL)
+        WHERE sf.is_current = true
+          AND DATE(asr.CREATED) >= DATE_SUB(CURRENT_DATE(), 30)
+          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+        GROUP BY sf.name
+        ORDER BY scored_convos DESC
+        LIMIT 5
+      `);
+      if (!r.length) return 'No matched reps found';
+      return r.map(row => `${row.rep_name}: ${row.scored_convos} convos`).join(' | ');
+    }),
+  ]);
+
+  res.json({ checks });
+});
+
 // ── POST /api/reconnect ────────────────────────────────────────────────────────
 app.post('/api/reconnect', async (_req, res) => {
   try {

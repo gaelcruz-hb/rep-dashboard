@@ -10,6 +10,73 @@ function EnvRow({ label, ok }) {
   );
 }
 
+function LevelAIDiagnostics() {
+  const [checks,  setChecks]  = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [ran,     setRan]     = useState(false);
+
+  async function runChecks() {
+    setLoading(true);
+    setRan(true);
+    try {
+      const res = await apiFetch('/api/diagnostics/levelai');
+      const body = await res.json();
+      setChecks(body.checks ?? []);
+    } catch (err) {
+      setChecks([{ label: 'Request failed', ok: false, error: err.message }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="bg-surface border border-border rounded-lg p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-text">LevelAI Instascore</h2>
+          <p className="text-[11px] text-muted mt-0.5">Checks table access, email join, and data availability</p>
+        </div>
+        <button
+          onClick={runChecks}
+          disabled={loading}
+          className="text-[11px] bg-accent/10 text-accent border border-accent/30 px-3 py-1.5 rounded-md hover:bg-accent/20 transition-colors font-mono disabled:opacity-50 cursor-pointer"
+        >
+          {loading ? 'Running…' : ran ? '↻ Re-run' : '▶ Run checks'}
+        </button>
+      </div>
+
+      {loading && (
+        <p className="text-xs text-muted font-mono animate-pulse">Running diagnostics…</p>
+      )}
+
+      {!loading && checks && (
+        <div className="flex flex-col gap-2">
+          {checks.map((c, i) => (
+            <div key={i} className="flex flex-col gap-0.5">
+              <div className="flex items-start gap-2 text-xs font-mono">
+                <span className={`mt-px shrink-0 ${c.ok ? 'text-success' : 'text-danger'}`}>
+                  {c.ok ? '✓' : '✗'}
+                </span>
+                <span className="text-muted">{c.label}</span>
+              </div>
+              {c.ok && c.value && (
+                <div className="ml-5 text-[11px] font-mono text-text bg-surface2 border border-border/60 rounded px-2 py-1 break-all">
+                  {c.value}
+                </div>
+              )}
+              {!c.ok && c.error && (
+                <div className="ml-5 text-[11px] font-mono text-danger bg-surface2 border border-danger/30 rounded px-2 py-1 break-all">
+                  {c.error}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Diagnostics() {
   const [data,      setData]      = useState(null);
   const [loading,   setLoading]   = useState(true);
@@ -111,6 +178,8 @@ export function Diagnostics() {
           <p className="text-xs text-danger font-mono">{data.error}</p>
         )}
       </div>
+
+      <LevelAIDiagnostics />
 
       {/* Reconnect */}
       <div className="bg-surface border border-border rounded-lg p-5 flex flex-col gap-3">

@@ -41,6 +41,7 @@ const DATE_TRUNC = {
   last_week: `DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7)`,
   month:     `DATE_TRUNC('MONTH', CURRENT_DATE())`,
   last_month:`DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))`,
+  last_30:   `DATE_SUB(CURRENT_DATE(), 30)`,
   quarter:   `DATE_TRUNC('QUARTER', CURRENT_DATE())`,
   year:      `DATE_TRUNC('YEAR', CURRENT_DATE())`,
 };

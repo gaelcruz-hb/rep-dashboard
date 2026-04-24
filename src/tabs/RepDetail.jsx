@@ -300,11 +300,12 @@ export function RepDetail() {
   const adjHoldCases = Math.max(0, rep.holdCases - archivedCases.filter(c => c.status === 'On Hold').length);
 
   const PERIOD_LABEL = {
-    today: 'Today', yesterday: 'Yesterday',
+    yesterday: 'Yesterday',
     week: 'This Week', last_week: 'Last Week',
     month: 'This Month', last_month: 'Last Month',
+    last_30: 'Last 30 Days',
   };
-  const PRIOR_LABEL = { today: 'Yesterday', week: 'Last Week', last_week: 'Week Before', month: 'Last Month', last_month: '2 Months Ago' };
+  const PRIOR_LABEL = { week: 'Last Week', last_week: 'Week Before', month: 'Last Month', last_month: '2 Months Ago' };
   const periodLabel = customRangeMode && customStartDate && customEndDate
     ? `${customStartDate} – ${customEndDate}`
     : (PERIOD_LABEL[periodFilter] ?? 'This Week');
@@ -314,7 +315,7 @@ export function RepDetail() {
   const wowCls = wow == null ? 'text-muted' : wow > 0 ? 'text-success' : wow < 0 ? 'text-danger' : 'text-muted';
   const wowStr = wow == null ? '—' : wow > 0 ? `+${wow}` : `${wow}`;
 
-  const isEarlyPeriod   = periodFilter === 'today' || periodFilter === 'week';
+  const isEarlyPeriod   = periodFilter === 'week';
   const earlyPeriodNote = 'No closed cases yet — expected early in the period';
 
   const metrics = [

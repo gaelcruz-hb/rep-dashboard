@@ -133,8 +133,9 @@ export function RepDetail() {
   const [modalCase, setModalCase]         = useState(null);
   const [toast, setToast]                 = useState(null);
   const [manuallyRestoredIds, setManuallyRestoredIds] = useState(new Set());
-  const [instaData, setInstaData]   = useState(null);
+  const [instaData, setInstaData]       = useState(null);
   const [instaLoading, setInstaLoading] = useState(false);
+  const [heatSortDir, setHeatSortDir]   = useState('asc'); // asc = worst→best (top→bottom)
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -454,49 +455,60 @@ export function RepDetail() {
         {metrics.map(m => <RepKpiCard key={m.label} {...m} />)}
       </div>
 
-      {/* Instascore category breakdown */}
-      {instaData?.byCategory?.length > 0 && (
-        <Card className="mb-4">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <div className="text-xs font-semibold text-text">Instascore — Category Breakdown</div>
-            <div className="text-[10px] text-muted font-mono">{instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}</div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  {['Category', 'Score', 'Conversations'].map(h => (
-                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {instaData.byCategory.map(row => {
-                  const pct = row.avg_pct;
-                  const barColor = pct >= goals.instascore ? 'bg-success' : pct >= goals.instascore * 0.8 ? 'bg-warn' : 'bg-danger';
-                  const textColor = pct >= goals.instascore ? 'text-success' : pct >= goals.instascore * 0.8 ? 'text-warn' : 'text-danger';
-                  return (
-                    <tr key={row.category_id} className="hover:bg-surface2 transition-colors">
-                      <td className="px-3 py-2.5 text-xs border-b border-border/50">{row.category}</td>
-                      <td className="px-3 py-2.5 text-xs border-b border-border/50">
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-24 bg-border rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                          </div>
-                          <span className={`font-mono text-[11px] ${textColor}`}>{pct}%</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted">{row.conversation_count}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+      {/* Instascore heatmap */}
+      {instaData?.byCategory?.length > 0 && (() => {
+        function heatColor(pct) {
+          // red(224,92,92) → yellow(245,166,35) → green(56,217,169)
+          const p = Math.max(0, Math.min(100, pct));
+          if (p <= 50) {
+            const t = p / 50;
+            return `rgb(${Math.round(224+(245-224)*t)},${Math.round(92+(166-92)*t)},${Math.round(92+(35-92)*t)})`;
+          }
+          const t = (p - 50) / 50;
+          return `rgb(${Math.round(245+(56-245)*t)},${Math.round(166+(217-166)*t)},${Math.round(35+(169-35)*t)})`;
+        }
+        const sorted = [...instaData.byCategory].sort((a, b) =>
+          heatSortDir === 'asc' ? a.avg_pct - b.avg_pct : b.avg_pct - a.avg_pct
+        );
+        return (
+          <Card className="mb-4">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-semibold text-text">Instascore — Category Breakdown</div>
+                <button
+                  onClick={() => setHeatSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                  className="text-muted hover:text-text transition-colors text-sm cursor-pointer"
+                  title={heatSortDir === 'asc' ? 'Sorted: worst → best. Click to reverse' : 'Sorted: best → worst. Click to reverse'}
+                >↕</button>
+              </div>
+              <div className="text-[10px] text-muted font-mono">
+                {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-b-lg">
+              {sorted.map((row, i) => {
+                const color = heatColor(row.avg_pct);
+                return (
+                  <div key={row.category_id} className="flex items-stretch" style={{ borderTop: i > 0 ? '1px solid rgba(0,0,0,0.12)' : undefined }}>
+                    {/* Category label */}
+                    <div className="w-52 shrink-0 flex items-center justify-end pr-3 py-2.5 text-[11px] text-muted font-mono text-right leading-tight border-r border-border/40">
+                      {row.category}
+                    </div>
+                    {/* Heatmap cell */}
+                    <div
+                      className="flex-1 flex items-center justify-between px-4 py-2.5"
+                      style={{ backgroundColor: color }}
+                    >
+                      <span className="text-xs font-bold font-mono text-black/70">{row.avg_pct}%</span>
+                      <span className="text-[10px] font-mono text-black/50">{row.conversation_count} convos</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* WoW card */}
       <Card className="mb-4">

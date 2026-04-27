@@ -135,8 +135,14 @@ export function RepDetail() {
   const [manuallyRestoredIds, setManuallyRestoredIds] = useState(new Set());
   const [instaData, setInstaData]       = useState(null);
   const [instaLoading, setInstaLoading] = useState(false);
-  const [heatSortDir, setHeatSortDir]     = useState('asc');
-  const [heatExpanded, setHeatExpanded]   = useState(false);
+  const [heatSortDir, setHeatSortDir]         = useState('asc');
+  const [heatExpanded, setHeatExpanded]       = useState(false);
+  const [sectionSortDir, setSectionSortDir]     = useState('asc');
+  const [sectionExpanded, setSectionExpanded]   = useState(false);
+  const [questionSortDir, setQuestionSortDir]   = useState('asc');
+  const [questionExpanded, setQuestionExpanded] = useState(false);
+  const [rubricSortDir, setRubricSortDir]       = useState('asc');
+  const [rubricExpanded, setRubricExpanded]     = useState(false);
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -456,6 +462,66 @@ export function RepDetail() {
         {metrics.map(m => <RepKpiCard key={m.label} {...m} />)}
       </div>
 
+      {/* Instascore rubric heatmap */}
+      {instaData?.byRubric?.length > 0 && (() => {
+        function heatColor(pct) {
+          const p = Math.max(0, Math.min(100, pct));
+          if (p <= 50) {
+            const t = p / 50;
+            return `rgb(${Math.round(224+(245-224)*t)},${Math.round(92+(166-92)*t)},${Math.round(92+(35-92)*t)})`;
+          }
+          const t = (p - 50) / 50;
+          return `rgb(${Math.round(245+(56-245)*t)},${Math.round(166+(217-166)*t)},${Math.round(35+(169-35)*t)})`;
+        }
+        const sorted = [...instaData.byRubric].sort((a, b) =>
+          rubricSortDir === 'asc' ? a.avg_pct - b.avg_pct : b.avg_pct - a.avg_pct
+        );
+        return (
+          <Card className="mb-4">
+            <button
+              onClick={() => setRubricExpanded(e => !e)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-text">Instascore — Rubric Breakdown</span>
+                <span
+                  onClick={e => { e.stopPropagation(); setRubricSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}
+                  className="text-muted hover:text-text transition-colors text-sm cursor-pointer"
+                  title={rubricSortDir === 'asc' ? 'Sorted: worst → best. Click to reverse' : 'Sorted: best → worst. Click to reverse'}
+                >↕</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-muted font-mono">
+                  {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+                </span>
+                <span className="text-muted text-xs">{rubricExpanded ? '▲' : '▼'}</span>
+              </div>
+            </button>
+            {rubricExpanded && (
+              <div className="overflow-hidden rounded-b-lg">
+                {sorted.map((row, i) => {
+                  const color = heatColor(row.avg_pct);
+                  return (
+                    <div key={row.rubric_id} className="flex items-stretch" style={{ borderTop: i > 0 ? '1px solid rgba(0,0,0,0.12)' : undefined }}>
+                      <div className="w-64 shrink-0 flex items-center justify-end pr-3 py-2.5 text-[11px] text-muted font-mono text-right leading-tight border-r border-border/40">
+                        {row.rubric_title}
+                      </div>
+                      <div
+                        className="flex-1 flex items-center justify-between px-4 py-2.5"
+                        style={{ backgroundColor: color }}
+                      >
+                        <span className="text-xs font-bold font-mono text-black/70">{row.avg_pct}%</span>
+                        <span className="text-[10px] font-mono text-black/50">{row.conversation_count} convos</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        );
+      })()}
+
       {/* Instascore heatmap */}
       {instaData?.byCategory?.length > 0 && (() => {
         function heatColor(pct) {
@@ -513,6 +579,154 @@ export function RepDetail() {
                 );
               })}
             </div>}
+          </Card>
+        );
+      })()}
+
+      {/* Instascore section heatmap */}
+      {instaData?.bySection?.length > 0 && (() => {
+        function heatColor(pct) {
+          const p = Math.max(0, Math.min(100, pct));
+          if (p <= 50) {
+            const t = p / 50;
+            return `rgb(${Math.round(224+(245-224)*t)},${Math.round(92+(166-92)*t)},${Math.round(92+(35-92)*t)})`;
+          }
+          const t = (p - 50) / 50;
+          return `rgb(${Math.round(245+(56-245)*t)},${Math.round(166+(217-166)*t)},${Math.round(35+(169-35)*t)})`;
+        }
+        const uniqueSections = Array.from(
+          new Map(instaData.bySection.map(r => [r.section_id, r])).values()
+        );
+        const sorted = [...uniqueSections].sort((a, b) =>
+          sectionSortDir === 'asc' ? a.avg_pct - b.avg_pct : b.avg_pct - a.avg_pct
+        );
+        return (
+          <Card className="mb-4">
+            <button
+              onClick={() => setSectionExpanded(e => !e)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-text">Instascore — Section Breakdown</span>
+                <span
+                  onClick={e => { e.stopPropagation(); setSectionSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}
+                  className="text-muted hover:text-text transition-colors text-sm cursor-pointer"
+                  title={sectionSortDir === 'asc' ? 'Sorted: worst → best. Click to reverse' : 'Sorted: best → worst. Click to reverse'}
+                >↕</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-muted font-mono">
+                  {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+                </span>
+                <span className="text-muted text-xs">{sectionExpanded ? '▲' : '▼'}</span>
+              </div>
+            </button>
+            {sectionExpanded && <div className="overflow-hidden rounded-b-lg">
+              {sorted.map((row, i) => {
+                const color = heatColor(row.avg_pct);
+                return (
+                  <div key={row.section_id} className="flex items-stretch" style={{ borderTop: i > 0 ? '1px solid rgba(0,0,0,0.12)' : undefined }}>
+                    <div className="w-52 shrink-0 flex items-center justify-end pr-3 py-2.5 text-[11px] text-muted font-mono text-right leading-tight border-r border-border/40">
+                      {row.section}
+                    </div>
+                    <div
+                      className="flex-1 flex items-center justify-between px-4 py-2.5"
+                      style={{ backgroundColor: color }}
+                    >
+                      <span className="text-xs font-bold font-mono text-black/70">{row.avg_pct}%</span>
+                      <span className="text-[10px] font-mono text-black/50">{row.conversation_count} convos</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+          </Card>
+        );
+      })()}
+
+      {/* Instascore question heatmap */}
+      {instaData?.byQuestion?.length > 0 && (() => {
+        function heatColor(pct) {
+          const p = Math.max(0, Math.min(100, pct));
+          if (p <= 50) {
+            const t = p / 50;
+            return `rgb(${Math.round(224+(245-224)*t)},${Math.round(92+(166-92)*t)},${Math.round(92+(35-92)*t)})`;
+          }
+          const t = (p - 50) / 50;
+          return `rgb(${Math.round(245+(56-245)*t)},${Math.round(166+(217-166)*t)},${Math.round(35+(169-35)*t)})`;
+        }
+
+        const isSorted = questionSortDir !== null;
+        const sorted = [...instaData.byQuestion].sort((a, b) =>
+          questionSortDir === 'asc' ? a.avg_pct - b.avg_pct : b.avg_pct - a.avg_pct
+        );
+
+        // Group by rubric when not globally sorted — only show rubric headers if >1 rubric
+        const rubrics = [...new Set(instaData.byQuestion.map(r => r.rubric_title))];
+        const showRubricHeaders = rubrics.length > 1 && questionSortDir === 'asc';
+
+        let rows;
+        if (showRubricHeaders) {
+          // Group by rubric in natural order
+          rows = rubrics.flatMap(rt => {
+            const qs = instaData.byQuestion
+              .filter(r => r.rubric_title === rt)
+              .sort((a, b) => a.avg_pct - b.avg_pct);
+            return [{ _header: true, rubric_title: rt }, ...qs];
+          });
+        } else {
+          rows = sorted;
+        }
+
+        return (
+          <Card className="mb-4">
+            <button
+              onClick={() => setQuestionExpanded(e => !e)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-text">Instascore — Question Breakdown</span>
+                <span
+                  onClick={e => { e.stopPropagation(); setQuestionSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}
+                  className="text-muted hover:text-text transition-colors text-sm cursor-pointer"
+                  title={questionSortDir === 'asc' ? 'Sorted: worst → best. Click to reverse' : 'Sorted: best → worst. Click to reverse'}
+                >↕</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-muted font-mono">
+                  {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+                </span>
+                <span className="text-muted text-xs">{questionExpanded ? '▲' : '▼'}</span>
+              </div>
+            </button>
+            {questionExpanded && (
+              <div className="overflow-hidden rounded-b-lg">
+                {rows.map((row, i) => {
+                  if (row._header) {
+                    return (
+                      <div key={`h-${row.rubric_title}`} className="px-4 py-1.5 bg-surface2 border-b border-border/40">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-muted">{row.rubric_title}</span>
+                      </div>
+                    );
+                  }
+                  const color = heatColor(row.avg_pct);
+                  return (
+                    <div key={row.question_id} className="flex items-stretch" style={{ borderTop: i > 0 ? '1px solid rgba(0,0,0,0.12)' : undefined }}>
+                      <div className="w-80 shrink-0 flex items-center justify-end pr-3 py-2.5 text-[11px] text-muted font-mono text-right leading-tight border-r border-border/40">
+                        {row.question}
+                      </div>
+                      <div
+                        className="flex-1 flex items-center justify-between px-4 py-2.5"
+                        style={{ backgroundColor: color }}
+                      >
+                        <span className="text-xs font-bold font-mono text-black/70">{row.avg_pct}%</span>
+                        <span className="text-[10px] font-mono text-black/50">{row.conversation_count} convos</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
         );
       })()}

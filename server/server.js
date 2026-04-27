@@ -524,7 +524,7 @@ app.get('/api/instascore', async (req, res) => {
   `;
 
   try {
-    const [categoryRows, overallRows] = await Promise.all([
+    const [categoryRows, sectionRows, overallRows, questionRows, rubricRows] = await Promise.all([
       query(`
         SELECT
           ins.CATEGORY_ID                                      AS category_id,
@@ -537,9 +537,43 @@ app.get('/api/instascore', async (req, res) => {
       `),
       query(`
         SELECT
+          ins.SECTION_ID                                       AS section_id,
+          ins.SECTION                                          AS section,
+          ins.CATEGORY_ID                                      AS category_id,
+          ins.CATEGORY                                         AS category,
+          AVG(CAST(ins.SECTION_SCORE_PCNT AS DOUBLE))         AS avg_pct,
+          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
+        ${baseJoin}
+        GROUP BY ins.SECTION_ID, ins.SECTION, ins.CATEGORY_ID, ins.CATEGORY
+        ORDER BY ins.SECTION
+      `),
+      query(`
+        SELECT
           AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS overall_pct,
           COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
         ${baseJoin}
+      `),
+      query(`
+        SELECT
+          ins.QUESTION_ID                                      AS question_id,
+          ins.QUESTION                                         AS question,
+          ins.RUBRIC_ID                                        AS rubric_id,
+          ins.RUBRIC_TITLE                                     AS rubric_title,
+          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS avg_pct,
+          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
+        ${baseJoin}
+        GROUP BY ins.QUESTION_ID, ins.QUESTION, ins.RUBRIC_ID, ins.RUBRIC_TITLE
+        ORDER BY ins.RUBRIC_TITLE, ins.QUESTION
+      `),
+      query(`
+        SELECT
+          ins.RUBRIC_ID                                        AS rubric_id,
+          ins.RUBRIC_TITLE                                     AS rubric_title,
+          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS avg_pct,
+          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
+        ${baseJoin}
+        GROUP BY ins.RUBRIC_ID, ins.RUBRIC_TITLE
+        ORDER BY ins.RUBRIC_TITLE
       `),
     ]);
 
@@ -550,6 +584,28 @@ app.get('/api/instascore', async (req, res) => {
       byCategory:        categoryRows.map(r => ({
         category_id:        r.category_id,
         category:           r.category,
+        avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
+        conversation_count: Number(r.conversation_count),
+      })),
+      bySection:         sectionRows.map(r => ({
+        section_id:         r.section_id,
+        section:            r.section,
+        category_id:        r.category_id,
+        category:           r.category,
+        avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
+        conversation_count: Number(r.conversation_count),
+      })),
+      byQuestion:        questionRows.map(r => ({
+        question_id:        r.question_id,
+        question:           r.question,
+        rubric_id:          r.rubric_id,
+        rubric_title:       r.rubric_title,
+        avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
+        conversation_count: Number(r.conversation_count),
+      })),
+      byRubric:          rubricRows.map(r => ({
+        rubric_id:          r.rubric_id,
+        rubric_title:       r.rubric_title,
         avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
         conversation_count: Number(r.conversation_count),
       })),

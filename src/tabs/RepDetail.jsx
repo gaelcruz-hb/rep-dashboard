@@ -135,7 +135,8 @@ export function RepDetail() {
   const [manuallyRestoredIds, setManuallyRestoredIds] = useState(new Set());
   const [instaData, setInstaData]       = useState(null);
   const [instaLoading, setInstaLoading] = useState(false);
-  const [heatSortDir, setHeatSortDir]   = useState('asc'); // asc = worst→best (top→bottom)
+  const [heatSortDir, setHeatSortDir]     = useState('asc');
+  const [heatExpanded, setHeatExpanded]   = useState(false);
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -472,20 +473,26 @@ export function RepDetail() {
         );
         return (
           <Card className="mb-4">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <button
+              onClick={() => setHeatExpanded(e => !e)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+            >
               <div className="flex items-center gap-3">
-                <div className="text-xs font-semibold text-text">Instascore — Category Breakdown</div>
-                <button
-                  onClick={() => setHeatSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                <span className="text-xs font-semibold text-text">Instascore — Category Breakdown</span>
+                <span
+                  onClick={e => { e.stopPropagation(); setHeatSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}
                   className="text-muted hover:text-text transition-colors text-sm cursor-pointer"
                   title={heatSortDir === 'asc' ? 'Sorted: worst → best. Click to reverse' : 'Sorted: best → worst. Click to reverse'}
-                >↕</button>
+                >↕</span>
               </div>
-              <div className="text-[10px] text-muted font-mono">
-                {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-muted font-mono">
+                  {instaData.conversationCount} conversation{instaData.conversationCount !== 1 ? 's' : ''} · {periodLabel}
+                </span>
+                <span className="text-muted text-xs">{heatExpanded ? '▲' : '▼'}</span>
               </div>
-            </div>
-            <div className="overflow-hidden rounded-b-lg">
+            </button>
+            {heatExpanded && <div className="overflow-hidden rounded-b-lg">
               {sorted.map((row, i) => {
                 const color = heatColor(row.avg_pct);
                 return (
@@ -505,7 +512,7 @@ export function RepDetail() {
                   </div>
                 );
               })}
-            </div>
+            </div>}
           </Card>
         );
       })()}

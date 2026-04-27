@@ -143,6 +143,9 @@ export function RepDetail() {
   const [questionExpanded, setQuestionExpanded] = useState(false);
   const [rubricSortDir, setRubricSortDir]       = useState('asc');
   const [rubricExpanded, setRubricExpanded]     = useState(false);
+  const [convoExpanded, setConvoExpanded]       = useState(false);
+  const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
+  const [convoSortDir, setConvoSortDir]         = useState('desc');
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -453,7 +456,15 @@ export function RepDetail() {
 
       {/* Rep name + team/manager header */}
       <div className="mb-4">
-        <div className="text-[18px] font-bold text-text mb-1">{rep.name}</div>
+        <div className="flex items-center gap-2">
+          <div className="text-[18px] font-bold text-text">{rep.name}</div>
+          {(detailLoading || instaLoading) && (
+            <svg className="animate-spin w-4 h-4 text-accent shrink-0" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          )}
+        </div>
         <div className="text-xs text-muted">{rep.team} · Manager: {findManagerForRep(rep.name)}</div>
       </div>
 
@@ -516,6 +527,111 @@ export function RepDetail() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </Card>
+        );
+      })()}
+
+      {/* Instascore conversations table */}
+      {instaData?.conversations?.length > 0 && (() => {
+        function scoreColor(pct) {
+          const p = Math.max(0, Math.min(100, pct));
+          if (p <= 50) {
+            const t = p / 50;
+            return `rgb(${Math.round(224+(245-224)*t)},${Math.round(92+(166-92)*t)},${Math.round(92+(35-92)*t)})`;
+          }
+          const t = (p - 50) / 50;
+          return `rgb(${Math.round(245+(56-245)*t)},${Math.round(166+(217-166)*t)},${Math.round(35+(169-35)*t)})`;
+        }
+
+        const sorted = [...instaData.conversations].sort((a, b) => {
+          const av = a[convoSortCol];
+          const bv = b[convoSortCol];
+          const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av - bv);
+          return convoSortDir === 'asc' ? cmp : -cmp;
+        });
+
+        function toggleConvoSort(col) {
+          if (convoSortCol === col) setConvoSortDir(d => d === 'asc' ? 'desc' : 'asc');
+          else { setConvoSortCol(col); setConvoSortDir('desc'); }
+        }
+
+        function ConvoSortArrow({ col }) {
+          if (convoSortCol !== col) return <span className="ml-1 text-border">↕</span>;
+          return <span className="ml-1 text-accent">{convoSortDir === 'asc' ? '↑' : '↓'}</span>;
+        }
+
+        return (
+          <Card className="mb-4">
+            <button
+              onClick={() => setConvoExpanded(e => !e)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+            >
+              <span className="text-xs font-semibold text-text">
+                Instascore — Conversations ({instaData.conversations.length})
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-muted font-mono">{periodLabel}</span>
+                <span className="text-muted text-xs">{convoExpanded ? '▲' : '▼'}</span>
+              </div>
+            </button>
+            {convoExpanded && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      {[
+                        { label: 'Date',       col: 'conversation_date' },
+                        { label: 'Instascore', col: 'instascore'        },
+                        { label: 'Questions',  col: 'question_count'    },
+                        { label: 'QA Ref',     col: 'qa_metrics_id'     },
+                      ].map(({ label, col }) => (
+                        <th
+                          key={col}
+                          onClick={() => toggleConvoSort(col)}
+                          className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap cursor-pointer hover:text-text select-none"
+                        >
+                          {label}<ConvoSortArrow col={col} />
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sorted.map(row => (
+                      <tr key={row.asr_log_id} className="hover:bg-surface2 transition-colors">
+                        <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                          {row.conversation_date}
+                        </td>
+                        <td className="px-3 py-2 text-xs border-b border-border/50 whitespace-nowrap">
+                          <span
+                            className="inline-block px-2 py-0.5 rounded font-mono font-bold text-xs text-black/70"
+                            style={{ backgroundColor: scoreColor(row.instascore) }}
+                          >
+                            {row.instascore}%
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted">
+                          {row.question_count}
+                        </td>
+                        <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap text-[10px]">
+                          {row.qa_metrics_id != null ? (
+                            <a
+                              href={`https://homebase.thelevel.ai/organizations/2/conversations/review/${row.qa_metrics_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-accent hover:underline"
+                            >
+                              {row.qa_metrics_id}
+                            </a>
+                          ) : (
+                            <span className="text-muted/40">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Card>

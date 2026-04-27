@@ -32,6 +32,7 @@ const TD      = 'Prod_redshift_replica.bizops_staging.talkdesk_fact_calls';
 const LAI_SCORE  = 'prod_raw.level_ai.homebase_instascore';
 const LAI_ASR    = 'prod_raw.level_ai.homebase_level_asr_asrlog';
 const LAI_USER   = 'prod_raw.level_ai.homebase_accounts_user';
+const LAI_QA     = 'prod_raw.level_ai.homebase_qa_metrics';
 
 // ── SQL helpers ────────────────────────────────────────────────────────────────
 const DATE_TRUNC = {
@@ -520,11 +521,12 @@ app.get('/api/instascore', async (req, res) => {
     WHERE sf.id = '${ownerId}'
       AND sf.is_current = true
       AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+      AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
       AND ${periodClause}
   `;
 
   try {
-    const [categoryRows, sectionRows, overallRows, questionRows, rubricRows] = await Promise.all([
+    const [categoryRows, sectionRows, questionRows, rubricRows, conversationRows] = await Promise.all([
       query(`
         SELECT
           ins.CATEGORY_ID                                      AS category_id,
@@ -549,12 +551,6 @@ app.get('/api/instascore', async (req, res) => {
       `),
       query(`
         SELECT
-          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS overall_pct,
-          COUNT(DISTINCT ins.ASR_LOG_ID)                       AS conversation_count
-        ${baseJoin}
-      `),
-      query(`
-        SELECT
           ins.QUESTION_ID                                      AS question_id,
           ins.QUESTION                                         AS question,
           ins.RUBRIC_ID                                        AS rubric_id,
@@ -575,12 +571,36 @@ app.get('/api/instascore', async (req, res) => {
         GROUP BY ins.RUBRIC_ID, ins.RUBRIC_TITLE
         ORDER BY ins.RUBRIC_TITLE
       `),
+      query(`
+        SELECT
+          asr.ID                                               AS asr_log_id,
+          DATE_FORMAT(asr.CREATED, 'yyyy-MM-dd')              AS conversation_date,
+          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS instascore,
+          COUNT(ins.ID)                                        AS question_count,
+          MAX(qm.ID)                                           AS qa_metrics_id
+        FROM ${LAI_SCORE} ins
+        JOIN ${LAI_ASR}  asr ON asr.ID   = ins.ASR_LOG_ID
+        LEFT JOIN ${LAI_QA} qm ON qm.ASR_LOG_ID = asr.ID
+        JOIN ${LAI_USER} u   ON u.ID     = asr.USER_ID
+        JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
+        WHERE sf.id = '${ownerId}'
+          AND sf.is_current = true
+          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+          AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+          AND ${periodClause}
+        GROUP BY asr.ID, asr.CREATED
+        ORDER BY asr.CREATED DESC
+      `),
     ]);
 
-    const overallRaw = overallRows[0]?.overall_pct;
+    const rubricAvgs = rubricRows.map(r => Number(r.avg_pct)).filter(v => !isNaN(v));
+    const overall = rubricAvgs.length > 0
+      ? Number((rubricAvgs.reduce((s, v) => s + v, 0) / rubricAvgs.length).toFixed(1))
+      : null;
+    const conversationCount = rubricRows.reduce((s, r) => s + Number(r.conversation_count ?? 0), 0);
     res.json({
-      overall:           overallRaw != null ? Number(Number(overallRaw).toFixed(1)) : null,
-      conversationCount: Number(overallRows[0]?.conversation_count ?? 0),
+      overall,
+      conversationCount,
       byCategory:        categoryRows.map(r => ({
         category_id:        r.category_id,
         category:           r.category,
@@ -608,6 +628,13 @@ app.get('/api/instascore', async (req, res) => {
         rubric_title:       r.rubric_title,
         avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
         conversation_count: Number(r.conversation_count),
+      })),
+      conversations:     conversationRows.map(r => ({
+        asr_log_id:         r.asr_log_id,
+        conversation_date:  r.conversation_date,
+        instascore:         Number(Number(r.instascore).toFixed(1)),
+        question_count:     Number(r.question_count),
+        qa_metrics_id:      r.qa_metrics_id != null ? Number(r.qa_metrics_id) : null,
       })),
     });
   } catch (err) {
@@ -788,6 +815,99 @@ app.get('/api/diagnostics/levelai', async (_req, res) => {
   ]);
 
   res.json({ checks });
+});
+
+// ── GET /api/instascore/conversation/:asr_log_id ──────────────────────────────
+app.get('/api/instascore/conversation/:asr_log_id', async (req, res) => {
+  const { asr_log_id } = req.params;
+  // Allow numeric or alphanumeric IDs
+  if (!asr_log_id || !/^[a-zA-Z0-9_-]{1,64}$/.test(asr_log_id))
+    return res.status(400).json({ error: 'valid asr_log_id required' });
+
+  try {
+    // Fetch all rows for this conversation (no rubric filter) so we can show
+    // both the full picture and the filtered score side-by-side for debugging
+    const [rows, allRows] = await Promise.all([
+      // Same join + DELETED filter as the conversations table query
+      query(`
+        SELECT
+          ins.RUBRIC_ID             AS rubric_id,
+          ins.RUBRIC_TITLE          AS rubric_title,
+          ins.CATEGORY_ID           AS category_id,
+          ins.CATEGORY              AS category,
+          ins.SECTION_ID            AS section_id,
+          ins.SECTION               AS section,
+          ins.QUESTION_ID           AS question_id,
+          ins.QUESTION              AS question,
+          ins.QUESTION_SCORE        AS question_score,
+          ins.QUESTION_SCORE_PCNT   AS question_score_pcnt,
+          ins.CATEGORY_SCORE_PCNT   AS category_score_pcnt,
+          ins.SECTION_SCORE_PCNT    AS section_score_pcnt,
+          ins.SELECTED_OPTION       AS selected_option
+        FROM ${LAI_SCORE} ins
+        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
+        WHERE CAST(asr.ID AS STRING) = CAST('${asr_log_id}' AS STRING)
+          AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+        ORDER BY ins.CATEGORY, ins.SECTION, ins.QUESTION
+      `),
+      // All rubrics on this conversation (non-deleted only)
+      query(`
+        SELECT ins.RUBRIC_TITLE AS rubric_title, COUNT(*) AS cnt
+        FROM ${LAI_SCORE} ins
+        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
+        WHERE CAST(asr.ID AS STRING) = CAST('${asr_log_id}' AS STRING)
+          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+        GROUP BY ins.RUBRIC_TITLE
+      `),
+    ]);
+
+    if (!rows.length) {
+      return res.json({
+        asr_log_id,
+        rows: [],
+        summary: null,
+        all_rubrics: allRows.map(r => ({ rubric_title: r.rubric_title, question_count: Number(r.cnt) })),
+        debug: allRows.length === 0
+          ? 'No rows found for this ID at all — ID may not exist in homebase_instascore'
+          : `ID exists but has no rows for "Unstoppable Call Experience (IS)". Rubrics found: ${allRows.map(r => r.rubric_title).join(', ')}`,
+      });
+    }
+
+    // Compute instascore matching SQL AVG behaviour: ignore NULL values
+    const scores = rows
+      .map(r => r.question_score_pcnt != null ? Number(r.question_score_pcnt) : NaN)
+      .filter(v => !isNaN(v));
+    const instascore = scores.length > 0
+      ? Number((scores.reduce((s, v) => s + v, 0) / scores.length).toFixed(2))
+      : null;
+
+    res.json({
+      asr_log_id,
+      summary: {
+        instascore,
+        total_questions: scores.length,
+        sum_of_scores:   Number(scores.reduce((s, v) => s + v, 0).toFixed(2)),
+        formula:         `${scores.map(v => v.toFixed(1)).join(' + ')} = ${scores.reduce((s, v) => s + v, 0).toFixed(2)} ÷ ${scores.length} = ${instascore}%`,
+        rubric_filter:   'Unstoppable Call Experience (IS)',
+      },
+      all_rubrics: allRows.map(r => ({ rubric_title: r.rubric_title, question_count: Number(r.cnt) })),
+      rows: rows.map(r => ({
+        rubric_title:       r.rubric_title,
+        category:           r.category,
+        section:            r.section,
+        question:           r.question,
+        question_score:     r.question_score,
+        question_score_pcnt: Number(r.question_score_pcnt),
+        category_score_pcnt: Number(r.category_score_pcnt),
+        section_score_pcnt:  Number(r.section_score_pcnt),
+        selected_option:    r.selected_option,
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [instascore/conversation]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── POST /api/reconnect ────────────────────────────────────────────────────────

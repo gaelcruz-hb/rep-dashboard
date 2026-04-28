@@ -34,6 +34,47 @@ const LAI_ASR    = 'prod_raw.level_ai.homebase_level_asr_asrlog';
 const LAI_USER   = 'prod_raw.level_ai.homebase_accounts_user';
 const LAI_QA     = 'prod_raw.level_ai.homebase_qa_metrics';
 
+// ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
+const INSTASCORE_CATEGORY_WEIGHTS = {
+  'Own your Impact':      25,
+  'Move Fast Learn Fast': 20,
+  'Be Customer Obsessed': 20,
+  'Purple Standard':      20,
+  'In Service':           15,
+};
+
+// Returns max QUESTION_SCORE_PCNT for a question using substring matching.
+// Immune to appended option text in the DB (e.g. '... "Sell Made Sell Attempt No Attempt"').
+function questionMaxPcnt(questionText) {
+  const t = (questionText || '').toLowerCase();
+  if (t.includes('make the sell')) return 200;
+  if (t.includes('accurate product terms')) return 200;
+  return 100;
+}
+
+// Both multi-point questions store scores at half-scale in the DB (max=100 instead of 200).
+// Multiply by 2 to normalize: Sell Attempt 50→100, Sell Made 100→200, Resolved 100→200, Partially 50→100.
+function adjustedScore(item) {
+  const t = (item.question || '').toLowerCase();
+  if (t.includes('make the sell') || t.includes('accurate product terms')) {
+    return (item.score ?? 0) * 2;
+  }
+  return item.score ?? 0;
+}
+
+function weightedInstascore(categoryScores) {
+  const present = categoryScores.filter(
+    c => INSTASCORE_CATEGORY_WEIGHTS[c.category] != null && c.score != null && !isNaN(c.score)
+  );
+  if (!present.length) return null;
+  const presentWeight  = present.reduce((s, c) => s + INSTASCORE_CATEGORY_WEIGHTS[c.category], 0);
+  const missingWeight  = 100 - presentWeight;
+  const distributed    = missingWeight / present.length;   // equal share to each present category
+  return Math.round(
+    present.reduce((s, c) => s + c.score * (INSTASCORE_CATEGORY_WEIGHTS[c.category] + distributed), 0) / 100
+  );
+}
+
 // ── SQL helpers ────────────────────────────────────────────────────────────────
 const DATE_TRUNC = {
   today:     `CURRENT_DATE()`,
@@ -514,14 +555,17 @@ app.get('/api/instascore', async (req, res) => {
     : `DATE(asr.CREATED) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
 
   const baseJoin = `
-    FROM ${LAI_SCORE} ins
+    FROM (
+      SELECT * FROM ${LAI_SCORE}
+      WHERE RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1
+    ) ins
     JOIN ${LAI_ASR}  asr ON asr.ID   = ins.ASR_LOG_ID
     JOIN ${LAI_USER} u   ON u.ID     = asr.USER_ID
     JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
     WHERE sf.id = '${ownerId}'
       AND sf.is_current = true
       AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
-      AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
       AND ${periodClause}
   `;
 
@@ -571,33 +615,85 @@ app.get('/api/instascore', async (req, res) => {
         GROUP BY ins.RUBRIC_ID, ins.RUBRIC_TITLE
         ORDER BY ins.RUBRIC_TITLE
       `),
+      // Pre-aggregate per (ASR_LOG_ID, CATEGORY) before any JOINs to prevent row multiplication.
+      // N/A questions (NULL score) are excluded so they don't reduce the max denominator.
+      // Multi-point question maxes are embedded in the CASE so each conversation's max is accurate.
       query(`
         SELECT
-          asr.ID                                               AS asr_log_id,
+          cat.asr_log_id,
           DATE_FORMAT(asr.CREATED, 'yyyy-MM-dd')              AS conversation_date,
-          AVG(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE))        AS instascore,
-          COUNT(ins.ID)                                        AS question_count,
+          cat.category,
+          cat.category_score                                   AS category_avg_pct,
+          cat.question_count,
           MAX(qm.ID)                                           AS qa_metrics_id
-        FROM ${LAI_SCORE} ins
-        JOIN ${LAI_ASR}  asr ON asr.ID   = ins.ASR_LOG_ID
-        LEFT JOIN ${LAI_QA} qm ON qm.ASR_LOG_ID = asr.ID
+        FROM (
+          SELECT
+            ins.ASR_LOG_ID                                     AS asr_log_id,
+            ins.CATEGORY                                       AS category,
+            SUM(CASE
+                  WHEN LOWER(ins.QUESTION) LIKE '%make the sell%'
+                    OR LOWER(ins.QUESTION) LIKE '%accurate product terms%'
+                  THEN COALESCE(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE), 0) * 2
+                  ELSE COALESCE(CAST(ins.QUESTION_SCORE_PCNT AS DOUBLE), 0)
+                END) * 100.0
+              / SUM(CASE
+                  WHEN LOWER(ins.QUESTION) LIKE '%make the sell%'          THEN 200.0
+                  WHEN LOWER(ins.QUESTION) LIKE '%accurate product terms%' THEN 200.0
+                  ELSE 100.0
+                END)                                          AS category_score,
+            COUNT(ins.QUESTION)                                AS question_count
+          FROM (
+            SELECT * FROM ${LAI_SCORE}
+            WHERE RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1
+          ) ins
+          WHERE ins.QUESTION_SCORE_PCNT IS NOT NULL
+            OR (ins.SELECTED_OPTION IS NOT NULL AND LOWER(TRIM(ins.SELECTED_OPTION)) != 'n/a')
+          GROUP BY ins.ASR_LOG_ID, ins.CATEGORY
+        ) cat
+        JOIN (
+          SELECT * FROM ${LAI_ASR}
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY ID ORDER BY CREATED DESC) = 1
+        ) asr ON asr.ID = cat.asr_log_id
         JOIN ${LAI_USER} u   ON u.ID     = asr.USER_ID
         JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
+        LEFT JOIN ${LAI_QA} qm ON qm.ASR_LOG_ID = cat.asr_log_id
         WHERE sf.id = '${ownerId}'
           AND sf.is_current = true
           AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
-          AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
           AND ${periodClause}
-        GROUP BY asr.ID, asr.CREATED
-        ORDER BY asr.CREATED DESC
+        GROUP BY cat.asr_log_id, asr.CREATED, cat.category, cat.category_score, cat.question_count
+        ORDER BY asr.CREATED DESC, cat.category
       `),
     ]);
 
-    const rubricAvgs = rubricRows.map(r => Number(r.avg_pct)).filter(v => !isNaN(v));
-    const overall = rubricAvgs.length > 0
-      ? Number((rubricAvgs.reduce((s, v) => s + v, 0) / rubricAvgs.length).toFixed(1))
+    // Group per-category rows by conversation, compute weighted instascore per convo
+    const convMap = new Map();
+    for (const r of conversationRows) {
+      if (!convMap.has(r.asr_log_id)) {
+        convMap.set(r.asr_log_id, {
+          asr_log_id:        r.asr_log_id,
+          conversation_date: r.conversation_date,
+          qa_metrics_id:     r.qa_metrics_id != null ? Number(r.qa_metrics_id) : null,
+          categories:        [],
+          question_count:    0,
+        });
+      }
+      const c = convMap.get(r.asr_log_id);
+      c.question_count += Number(r.question_count);
+      // category_avg_pct is pre-computed in SQL as sum(score)/sum(max) per scored question
+      c.categories.push({ category: r.category, score: r.category_avg_pct != null ? Number(r.category_avg_pct) : null });
+    }
+    const conversations = Array.from(convMap.values())
+      .map(c => ({ ...c, instascore: weightedInstascore(c.categories) }))
+      .sort((a, b) => b.conversation_date.localeCompare(a.conversation_date));
+
+    const validScores = conversations.map(c => c.instascore).filter(v => v != null);
+    const overall = validScores.length > 0
+      ? Math.round(validScores.reduce((s, v) => s + v, 0) / validScores.length)
       : null;
-    const conversationCount = rubricRows.reduce((s, r) => s + Number(r.conversation_count ?? 0), 0);
+    const conversationCount = conversations.length;
+
     res.json({
       overall,
       conversationCount,
@@ -629,12 +725,12 @@ app.get('/api/instascore', async (req, res) => {
         avg_pct:            Number(Number(r.avg_pct).toFixed(1)),
         conversation_count: Number(r.conversation_count),
       })),
-      conversations:     conversationRows.map(r => ({
-        asr_log_id:         r.asr_log_id,
-        conversation_date:  r.conversation_date,
-        instascore:         Number(Number(r.instascore).toFixed(1)),
-        question_count:     Number(r.question_count),
-        qa_metrics_id:      r.qa_metrics_id != null ? Number(r.qa_metrics_id) : null,
+      conversations:     conversations.map(c => ({
+        asr_log_id:        c.asr_log_id,
+        conversation_date: c.conversation_date,
+        instascore:        c.instascore,
+        question_count:    c.question_count,
+        qa_metrics_id:     c.qa_metrics_id,
       })),
     });
   } catch (err) {
@@ -825,10 +921,20 @@ app.get('/api/instascore/conversation/:asr_log_id', async (req, res) => {
     return res.status(400).json({ error: 'valid asr_log_id required' });
 
   try {
-    // Fetch all rows for this conversation (no rubric filter) so we can show
-    // both the full picture and the filtered score side-by-side for debugging
-    const [rows, allRows] = await Promise.all([
-      // Same join + DELETED filter as the conversations table query
+    // If the input ID matches a homebase_qa_metrics.id, resolve to the ASR log ID
+    const qaLookup = await query(`
+      SELECT ASR_LOG_ID FROM ${LAI_QA}
+      WHERE CAST(ID AS STRING) = CAST('${asr_log_id}' AS STRING)
+      LIMIT 1
+    `);
+    const resolved_id = qaLookup[0]?.ASR_LOG_ID ?? asr_log_id;
+
+    // Deduplicated source filtered to target rubric — one row per unique question text
+    const insFiltered = `(SELECT * FROM ${LAI_SCORE} WHERE CAST(ASR_LOG_ID AS STRING) = CAST('${resolved_id}' AS STRING) AND RUBRIC_TITLE = 'Unstoppable Call Experience (IS)' QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1)`;
+    // Deduplicated source across all rubrics — for the rubric breakdown panel
+    const insAll = `(SELECT * FROM ${LAI_SCORE} WHERE CAST(ASR_LOG_ID AS STRING) = CAST('${resolved_id}' AS STRING) QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, RUBRIC_TITLE, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1)`;
+
+    const [rows, allRows, asrMeta] = await Promise.all([
       query(`
         SELECT
           ins.RUBRIC_ID             AS rubric_id,
@@ -844,29 +950,42 @@ app.get('/api/instascore/conversation/:asr_log_id', async (req, res) => {
           ins.CATEGORY_SCORE_PCNT   AS category_score_pcnt,
           ins.SECTION_SCORE_PCNT    AS section_score_pcnt,
           ins.SELECTED_OPTION       AS selected_option
-        FROM ${LAI_SCORE} ins
-        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
-        WHERE CAST(asr.ID AS STRING) = CAST('${asr_log_id}' AS STRING)
-          AND ins.RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
-          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+        FROM ${insFiltered} ins
         ORDER BY ins.CATEGORY, ins.SECTION, ins.QUESTION
       `),
-      // All rubrics on this conversation (non-deleted only)
       query(`
         SELECT ins.RUBRIC_TITLE AS rubric_title, COUNT(*) AS cnt
-        FROM ${LAI_SCORE} ins
-        JOIN ${LAI_ASR} asr ON asr.ID = ins.ASR_LOG_ID
-        WHERE CAST(asr.ID AS STRING) = CAST('${asr_log_id}' AS STRING)
-          AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+        FROM ${insAll} ins
         GROUP BY ins.RUBRIC_TITLE
+      `),
+      // ASR log metadata — CUSTOM_FIELDS holds call reason and other metadata
+      query(`
+        SELECT CUSTOM_FIELDS, SUMMARY, CHANNEL, CONVERSATION_STATUS
+        FROM ${LAI_ASR}
+        WHERE CAST(ID AS STRING) = CAST('${resolved_id}' AS STRING)
+        LIMIT 1
       `),
     ]);
 
+    // Parse CUSTOM_FIELDS JSON
+    let customFields = null;
+    const rawMeta = asrMeta[0];
+    if (rawMeta?.CUSTOM_FIELDS) {
+      try { customFields = JSON.parse(rawMeta.CUSTOM_FIELDS); } catch { customFields = rawMeta.CUSTOM_FIELDS; }
+    }
+    const callMeta = rawMeta ? {
+      custom_fields:       customFields,
+      summary:             rawMeta.SUMMARY ?? null,
+      channel:             rawMeta.CHANNEL ?? null,
+      conversation_status: rawMeta.CONVERSATION_STATUS ?? null,
+    } : null;
+
     if (!rows.length) {
       return res.json({
-        asr_log_id,
+        asr_log_id: resolved_id,
         rows: [],
         summary: null,
+        call_meta: callMeta,
         all_rubrics: allRows.map(r => ({ rubric_title: r.rubric_title, question_count: Number(r.cnt) })),
         debug: allRows.length === 0
           ? 'No rows found for this ID at all — ID may not exist in homebase_instascore'
@@ -874,22 +993,67 @@ app.get('/api/instascore/conversation/:asr_log_id', async (req, res) => {
       });
     }
 
-    // Compute instascore matching SQL AVG behaviour: ignore NULL values
-    const scores = rows
-      .map(r => r.question_score_pcnt != null ? Number(r.question_score_pcnt) : NaN)
-      .filter(v => !isNaN(v));
-    const instascore = scores.length > 0
-      ? Number((scores.reduce((s, v) => s + v, 0) / scores.length).toFixed(2))
-      : null;
+    // Compute weighted instascore: per-category avg → weighted by INSTASCORE_CATEGORY_WEIGHTS
+    const catGroups = {};
+    for (const r of rows) {
+      if (!catGroups[r.category]) catGroups[r.category] = [];
+      const v = r.question_score_pcnt != null ? Number(r.question_score_pcnt) : NaN;
+      catGroups[r.category].push({
+        question:        r.question,
+        score:           isNaN(v) ? null : v,
+        selected_option: r.selected_option ?? null,
+      });
+    }
+    const isNA = item =>
+      item.selected_option == null || item.selected_option.trim().toLowerCase() === 'n/a';
+    const categoryScores = Object.entries(catGroups).map(([category, items]) => {
+      // "answered" = question was given a real response (not N/A), even if score is 0
+      const answered    = items.filter(i => !isNA(i));
+      const correct     = answered.filter(i => (i.score ?? 0) > 0).length;
+      const sumScore    = answered.reduce((s, i) => s + adjustedScore(i), 0);
+      const maxSumScore = answered.reduce((s, i) => s + questionMaxPcnt(i.question), 0);
+      const hasMultiPt  = answered.some(i => questionMaxPcnt(i.question) > 100);
+      const avgScore    = maxSumScore > 0 ? (sumScore / maxSumScore) * 100 : null;
+      return {
+        category,
+        score:          avgScore,
+        question_count: answered.length,
+        correct_count:  correct,
+        questions:      items,
+        sum_score:      hasMultiPt ? sumScore    : null,
+        max_score:      hasMultiPt ? maxSumScore : null,
+      };
+    });
+    const instascore = weightedInstascore(categoryScores);
+
+    const presentCats    = categoryScores.filter(c => INSTASCORE_CATEGORY_WEIGHTS[c.category] != null && c.score != null);
+    const presentWeight  = presentCats.reduce((s, c) => s + INSTASCORE_CATEGORY_WEIGHTS[c.category], 0);
+    const missingCats    = Object.keys(INSTASCORE_CATEGORY_WEIGHTS).filter(cat => !catGroups[cat]);
+    const distributed    = presentCats.length > 0 ? (100 - presentWeight) / presentCats.length : 0;
+    // Attach adjusted (redistributed) weights to each present category
+    const categoryScoresWithWeights = categoryScores.map(c => ({
+      ...c,
+      original_weight: INSTASCORE_CATEGORY_WEIGHTS[c.category] ?? null,
+      adjusted_weight: (c.score != null && INSTASCORE_CATEGORY_WEIGHTS[c.category] != null)
+        ? Number((INSTASCORE_CATEGORY_WEIGHTS[c.category] + distributed).toFixed(2))
+        : null,
+    }));
+    const formulaStr = presentCats.map(c => {
+      const adj = Number((INSTASCORE_CATEGORY_WEIGHTS[c.category] + distributed).toFixed(1));
+      return `${c.category} (${adj}%) = ${c.score.toFixed(1)}`;
+    }).join(' | ')
+      + (missingCats.length ? ` | Missing (redistributed): ${missingCats.join(', ')}` : '')
+      + ` → ${instascore}%`;
 
     res.json({
-      asr_log_id,
+      asr_log_id: resolved_id,
+      call_meta: callMeta,
       summary: {
         instascore,
-        total_questions: scores.length,
-        sum_of_scores:   Number(scores.reduce((s, v) => s + v, 0).toFixed(2)),
-        formula:         `${scores.map(v => v.toFixed(1)).join(' + ')} = ${scores.reduce((s, v) => s + v, 0).toFixed(2)} ÷ ${scores.length} = ${instascore}%`,
-        rubric_filter:   'Unstoppable Call Experience (IS)',
+        total_questions:  rows.length,
+        formula:          formulaStr,
+        rubric_filter:    'Unstoppable Call Experience (IS)',
+        category_scores:  categoryScoresWithWeights,
       },
       all_rubrics: allRows.map(r => ({ rubric_title: r.rubric_title, question_count: Number(r.cnt) })),
       rows: rows.map(r => ({

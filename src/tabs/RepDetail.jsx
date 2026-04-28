@@ -614,19 +614,8 @@ export function RepDetail() {
                         <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted">
                           {row.question_count}
                         </td>
-                        <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap text-[10px]">
-                          {row.qa_metrics_id != null ? (
-                            <a
-                              href={`https://homebase.thelevel.ai/organizations/2/conversations/review/${row.qa_metrics_id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-accent hover:underline"
-                            >
-                              {row.qa_metrics_id}
-                            </a>
-                          ) : (
-                            <span className="text-muted/40">—</span>
-                          )}
+                        <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted/60 whitespace-nowrap text-[10px]">
+                          {row.qa_metrics_id ?? '—'}
                         </td>
                       </tr>
                     ))}

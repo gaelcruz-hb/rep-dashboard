@@ -115,7 +115,7 @@ function ConversationInspector() {
     <div className="bg-surface border border-border rounded-lg p-5 flex flex-col gap-4">
       <div>
         <h2 className="text-sm font-semibold text-text">Conversation Instascore Inspector</h2>
-        <p className="text-[11px] text-muted mt-0.5">Shows every scored question for a single conversation ID and traces the calculation</p>
+        <p className="text-[11px] text-muted mt-0.5">Shows each unique question once (latest score) and traces the instascore calculation</p>
       </div>
 
       <div className="flex gap-2">
@@ -124,7 +124,7 @@ function ConversationInspector() {
           value={inputId}
           onChange={e => setInputId(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && inspect()}
-          placeholder="ASR Log ID (e.g. 568758)"
+          placeholder="ASR Log ID or QA Ref (e.g. 568758)"
           className="flex-1 bg-surface2 border border-border text-text px-3 py-1.5 rounded-md text-xs font-mono outline-none focus:border-accent transition-colors"
         />
         <button
@@ -142,10 +142,40 @@ function ConversationInspector() {
         </div>
       )}
 
+      {/* Call metadata — channel, status, and CUSTOM_FIELDS keys */}
+      {result && result.call_meta && (
+        <div className="bg-surface2 border border-border rounded-lg p-3 flex flex-col gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted">Call Metadata</span>
+          {result.call_meta.channel && (
+            <div className="flex gap-2 text-[11px] font-mono">
+              <span className="text-muted/60 w-36 shrink-0">Channel</span>
+              <span className="text-text">{result.call_meta.channel}</span>
+            </div>
+          )}
+          {result.call_meta.conversation_status && (
+            <div className="flex gap-2 text-[11px] font-mono">
+              <span className="text-muted/60 w-36 shrink-0">Status</span>
+              <span className="text-text">{result.call_meta.conversation_status}</span>
+            </div>
+          )}
+          {result.call_meta.custom_fields && typeof result.call_meta.custom_fields === 'object' && (
+            Object.entries(result.call_meta.custom_fields).map(([k, v]) => (
+              <div key={k} className="flex gap-2 text-[11px] font-mono">
+                <span className="text-muted/60 w-36 shrink-0 break-all">{k}</span>
+                <span className="text-text break-all">{String(v ?? '—')}</span>
+              </div>
+            ))
+          )}
+          {result.call_meta.custom_fields && typeof result.call_meta.custom_fields === 'string' && (
+            <div className="text-[11px] font-mono text-text break-all">{result.call_meta.custom_fields}</div>
+          )}
+        </div>
+      )}
+
       {result && result.summary && (
         <div className="flex flex-col gap-3">
           {/* Summary */}
-          <div className="bg-surface2 border border-border rounded-lg p-3 flex flex-col gap-1.5">
+          <div className="bg-surface2 border border-border rounded-lg p-3 flex flex-col gap-2">
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-mono uppercase tracking-wider text-muted">Instascore</span>
               <span
@@ -156,8 +186,74 @@ function ConversationInspector() {
               </span>
               <span className="text-[10px] text-muted font-mono ml-auto">{result.summary.total_questions} questions</span>
             </div>
-            <div className="text-[10px] font-mono text-muted break-all leading-relaxed mt-1">
-              <span className="text-muted/60">Formula: </span>{result.summary.formula}
+            {/* Per-category weighted breakdown */}
+            {result.summary.category_scores?.length > 0 && (
+              <div className="flex flex-col gap-2 border-t border-border/40 pt-2 mt-0.5">
+                {result.summary.category_scores.map(c => {
+                  const weightChanged = c.adjusted_weight != null && c.original_weight != null && c.adjusted_weight !== c.original_weight;
+                  // Multi-point categories: express as point-equivalents (each 100pts = 1 unit)
+                  // e.g. sum=100, max=300 → 1/3; sum=300, max=300 → 3/3
+                  const fraction = c.sum_score != null && c.max_score != null
+                    ? `${Math.round(c.sum_score / 100)}/${Math.round(c.max_score / 100)}`
+                    : c.question_count > 0
+                      ? `${c.correct_count ?? 0}/${c.question_count}`
+                      : null;
+                  return (
+                    <div key={c.category} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 text-[11px] font-mono">
+                        <span className="text-muted/60 w-44 shrink-0">{c.category}</span>
+                        <span className="text-[10px] w-16 shrink-0">
+                          {c.adjusted_weight != null ? (
+                            <>
+                              <span className={weightChanged ? 'text-accent' : 'text-muted/50'}>{c.adjusted_weight}%</span>
+                              {weightChanged && <span className="text-muted/40 ml-1 line-through">{c.original_weight}%</span>}
+                            </>
+                          ) : <span className="text-muted/40">—</span>}
+                        </span>
+                        <span className="text-text">{c.score != null ? c.score.toFixed(1) : '—'}</span>
+                        {fraction && (
+                          <span className="text-muted/60 text-[10px] ml-1">({fraction})</span>
+                        )}
+                        <span className="text-muted/40 text-[10px] ml-auto">{c.question_count}q</span>
+                      </div>
+                      {c.questions?.length > 0 && (
+                        <div className="ml-2 flex flex-col gap-0.5 pl-2 border-l border-border/30">
+                          {c.questions.map((q, qi) => {
+                            const na = q.selected_option == null || q.selected_option.trim().toLowerCase() === 'n/a';
+                            return (
+                              <div key={qi} className="flex items-start gap-2 text-[10px] font-mono">
+                                {na ? (
+                                  <span className="shrink-0 px-1 py-px rounded font-bold mt-px text-[9px] leading-none bg-surface text-muted/50 border border-border/40">
+                                    N/A
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="shrink-0 px-1 rounded text-black/70 font-bold mt-px"
+                                    style={{ backgroundColor: scoreColor(q.score ?? 0) }}
+                                  >
+                                    {q.score != null ? q.score.toFixed(0) : '0'}
+                                  </span>
+                                )}
+                                <span className={`leading-snug flex-1 ${na ? 'text-muted/35' : 'text-muted/70'}`}>
+                                  {q.question}
+                                </span>
+                                {!na && q.selected_option && (
+                                  <span className="shrink-0 text-[9px] text-muted/45 italic whitespace-nowrap">
+                                    {q.selected_option}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="text-[10px] font-mono text-muted/60 break-all leading-relaxed border-t border-border/40 pt-1.5">
+              {result.summary.formula}
             </div>
           </div>
 

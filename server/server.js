@@ -1117,7 +1117,7 @@ function writeContest(data) {
 
 function requirePin(req, res, next) {
   const pin = req.headers['x-contest-pin'];
-  if (!pin || pin !== process.env.CONTEST_PIN) {
+  if (!pin || pin !== '9090') {
     return res.status(401).json({ error: 'invalid or missing PIN' });
   }
   next();

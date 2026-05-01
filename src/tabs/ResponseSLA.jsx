@@ -230,7 +230,7 @@ export function ResponseSLA() {
   const riskRows = filteredReps
     .flatMap(r =>
       r.cases
-        .filter(c => c.isBreached || c.isAtRisk)
+        .filter(c => c.isBreached || c.isAtRisk || c.noResponse)
         .slice(0, 3)
         .map(c => ({ ...c, repName: r.name }))
     )
@@ -306,7 +306,9 @@ export function ResponseSLA() {
                     ? <span className="text-danger font-semibold text-[11px]">⚠ Breaching</span>
                     : c.isAtRisk
                       ? <span className="text-warn text-[11px]">↑ Approaching</span>
-                      : <span className="text-muted text-[11px]">Aged ({c.ageDays}d)</span>;
+                      : c.noResponse
+                        ? <span className="text-warn text-[11px]">No Response</span>
+                        : <span className="text-muted text-[11px]">Aged ({c.ageDays}d)</span>;
                 return (
                   <tr key={i} className="hover:bg-surface2 transition-colors">
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
@@ -353,15 +355,12 @@ export function ResponseSLA() {
             : null;
           const isClosed        = c.IsClosed === true || c.Status === 'Closed';
           const waitingOnClient = !isClosed && (c.Status === 'Pending' || c.Status === 'On Hold');
-          const isBreached = !isClosed && !waitingOnClient && (respHrs != null
-            ? respHrs > goals.slaBreach
-            : lastActivityHrs > goals.slaBreach);
-          const isAtRisk   = !isClosed && !waitingOnClient && !isBreached && (respHrs != null
-            ? respHrs > goals.slaBreach * 0.75
-            : lastActivityHrs > goals.slaBreach * 0.75);
+          const isBreached = !isClosed && !waitingOnClient && respHrs != null && respHrs > goals.slaBreach;
+          const isAtRisk   = !isClosed && !waitingOnClient && !isBreached && respHrs != null && respHrs > goals.slaBreach * 0.75;
+          const noResponse = !isClosed && !waitingOnClient && respHrs == null;
           const created    = new Date(c.CreatedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           return { sfId: c.Id, caseNum: c.CaseNumber, subject: c.Subject ?? '—', status: c.Status,
-                   rep: c.Owner?.Name ?? '—', ageDays, lastActivityDays, respHrs, isBreached, isAtRisk, isClosed, waitingOnClient, created };
+                   rep: c.Owner?.Name ?? '—', ageDays, lastActivityDays, respHrs, isBreached, isAtRisk, noResponse, isClosed, waitingOnClient, created };
         });
 
         // Client-side filters
@@ -433,9 +432,9 @@ export function ResponseSLA() {
                           ? <span className="text-danger font-semibold text-[11px]">⚠ Breaching</span>
                           : c.isAtRisk
                             ? <span className="text-warn text-[11px]">↑ Approaching</span>
-                            : c.respHrs != null
-                              ? <span className="text-success text-[11px]">Met</span>
-                              : <span className="text-muted text-[11px]">—</span>;
+                            : c.noResponse
+                              ? <span className="text-warn text-[11px]">No Response</span>
+                              : <span className="text-success text-[11px]">Met</span>;
                     return (
                       <tr key={i} className="hover:bg-surface2 transition-colors">
                         <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">

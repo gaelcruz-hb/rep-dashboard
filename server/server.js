@@ -196,6 +196,9 @@ function priorClosedClause(period) {
     case 'last_month':
       return `DATE(closeddate) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -2))
               AND DATE(closeddate) < DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))`;
+    case 'last_30':
+      return `DATE(closeddate) >= DATE_SUB(CURRENT_DATE(), 60)
+              AND DATE(closeddate) < DATE_SUB(CURRENT_DATE(), 30)`;
     default:
       return null;
   }
@@ -1086,6 +1089,357 @@ app.post('/api/reconnect', async (_req, res) => {
 
 // ── GET /health ────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// ── Homie Contest CMS ──────────────────────────────────────────────────────────
+const CONTEST_FILE = path.resolve(__dirname, 'contest.json');
+
+const HOUSE_COLORS     = { Grind: 'red', Reign: 'blue', Legacy: 'purple' };
+const VALID_HOUSES     = new Set(['Grind', 'Reign', 'Legacy']);
+const VALID_BONUS_TYPES = new Set(['bounty_win', 'fortress', 'daily_raid', 'discretionary', 'weekly_battle']);
+const DATE_RE          = /^\d{4}-\d{2}-\d{2}$/;
+
+const WEEK_RANGES = {
+  '1': { start: '2026-05-04', end: '2026-05-09', section: 'OYI',        prize: 'Boba run' },
+  '2': { start: '2026-05-11', end: '2026-05-16', section: 'OYI',        prize: 'WFH Monday May 19' },
+  '3': { start: '2026-05-18', end: '2026-05-23', section: 'BCO',        prize: 'Movie tickets' },
+  '4': { start: '2026-05-26', end: '2026-05-29', section: 'In Service', prize: '$25 GC per rep' },
+};
+
+function readContest() {
+  try {
+    return JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
+  } catch { return { reps: {}, houses: {}, weeklyBattles: {}, goals: {} }; }
+}
+
+function writeContest(data) {
+  fs.writeFileSync(CONTEST_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function requirePin(req, res, next) {
+  const pin = req.headers['x-contest-pin'];
+  if (!pin || pin !== process.env.CONTEST_PIN) {
+    return res.status(401).json({ error: 'invalid or missing PIN' });
+  }
+  next();
+}
+
+// ── Point calculation ──────────────────────────────────────────────────────────
+const ZERO_PTS = { attendance: 0, productivity: 0, instascore: 0, upgrades: 0, addons: 0, total: 0 };
+
+function calcDayPoints(day) {
+  if (!day?.attended) return { ...ZERO_PTS };
+  const attendance   = day.onTime ? 1 : 0;
+  const productivity = (day.productivityPct ?? 0) >= 75 ? 5 : 0;
+  let instascore = 0;
+  if ((day.instascoreConvos ?? 0) >= 5) {
+    const pct = day.instascorePct ?? 0;
+    if (pct >= 80)      instascore = 3;
+    else if (pct >= 70) instascore = 2;
+  }
+  const upgrades =
+    (day.upgrades?.anyToEssentials  ?? 0) * 1 +
+    (day.upgrades?.essentialsToPlus ?? 0) * 2 +
+    (day.upgrades?.plusToAio        ?? 0) * 2 +
+    (day.upgrades?.basicToPlus      ?? 0) * 3 +
+    (day.upgrades?.basicToAio       ?? 0) * 5;
+  const addons =
+    (day.addons?.hourlyPay    ?? 0) * 1 +
+    (day.addons?.payrollPass  ?? 0) * 2;
+  return { attendance, productivity, instascore, upgrades, addons,
+           total: attendance + productivity + instascore + upgrades + addons };
+}
+
+// Returns { productivityBonus, attendanceBonus } for a house on a specific date.
+// Requires ALL house members to have a day entry before awarding any bonus —
+// missing data means Lilly hasn't entered it yet, so we can't confirm the house qualified.
+function calcHouseDayBonus(houseName, date, allReps) {
+  const members = Object.entries(allReps).filter(([, r]) => r.house === houseName);
+  const total   = members.length;
+  if (!total) return { productivityBonus: 0, attendanceBonus: 0 };
+  const days = members.map(([, r]) => r.days?.[date]);
+  if (days.some(d => d === undefined)) return { productivityBonus: 0, attendanceBonus: 0 };
+  const attended = days.filter(d => d?.attended);
+  const allProd  = attended.length > 0 && attended.every(d => (d.productivityPct ?? 0) >= 75);
+  const attRate  = attended.length / total;
+  return {
+    productivityBonus: allProd ? 1 : 0,
+    attendanceBonus:   attRate >= 0.9 ? 1 : 0,
+  };
+}
+
+function computeStandings(data) {
+  // Pre-compute house daily bonuses for every date that appears in any rep's days
+  const allDates = new Set(
+    Object.values(data.reps).flatMap(r => Object.keys(r.days ?? {}))
+  );
+  const houseDayBonus = {};
+  for (const house of ['Grind', 'Reign', 'Legacy']) {
+    houseDayBonus[house] = {};
+    for (const date of allDates) {
+      houseDayBonus[house][date] = calcHouseDayBonus(house, date, data.reps);
+    }
+  }
+
+  const repRows = Object.entries(data.reps).map(([name, r]) => {
+    const bd = { attendance: 0, productivity: 0, instascore: 0, upgrades: 0, addons: 0, houseBonus: 0, manual: 0 };
+    for (const [date, day] of Object.entries(r.days ?? {})) {
+      const pts = calcDayPoints(day);
+      bd.attendance   += pts.attendance;
+      bd.productivity += pts.productivity;
+      bd.instascore   += pts.instascore;
+      bd.upgrades     += pts.upgrades;
+      bd.addons       += pts.addons;
+      if (day.attended) {
+        const hb = houseDayBonus[r.house]?.[date] ?? {};
+        bd.houseBonus += (hb.productivityBonus ?? 0) + (hb.attendanceBonus ?? 0);
+      }
+    }
+    bd.manual = (r.bonuses ?? []).reduce((s, b) => s + (b.amount ?? 0), 0);
+    const total = bd.attendance + bd.productivity + bd.instascore + bd.upgrades + bd.addons + bd.houseBonus + bd.manual;
+    return { name, house: r.house, breakdown: bd, total, bonuses: r.bonuses ?? [] };
+  });
+
+  const houseRows = Object.entries(data.houses).map(([name, h]) => {
+    const repTotal   = repRows.filter(r => r.house === name).reduce((s, r) => s + r.total, 0);
+    const bonusTotal = (h.bonuses ?? []).reduce((s, b) => s + (b.amount ?? 0), 0);
+    return { name, color: HOUSE_COLORS[name] ?? 'gray', repTotal, bonusTotal, grandTotal: repTotal + bonusTotal, bonuses: h.bonuses ?? [] };
+  });
+
+  return { reps: repRows, houses: houseRows };
+}
+
+// ── Weekly battle helpers ──────────────────────────────────────────────────────
+function getWeeklyStats(data, week) {
+  const range = WEEK_RANGES[week];
+  if (!range) return null;
+  const mrrGoals = data.goals?.mrr ?? {};
+  const houses   = ['Grind', 'Reign', 'Legacy'];
+
+  const houseStats = {};
+  for (const house of houses) {
+    const members = Object.entries(data.reps).filter(([, r]) => r.house === house);
+    const memberStats = members.map(([name, r]) => {
+      const weekDays  = Object.entries(r.days ?? {})
+        .filter(([d]) => d >= range.start && d <= range.end)
+        .map(([, day]) => day);
+      const attended   = weekDays.filter(d => d?.attended);
+      const mrrGoal    = mrrGoals[name] ?? mrrGoals.default ?? 1500;
+      const totalMrr   = attended.reduce((s, d) => s + (d.mrrDollars ?? 0), 0);
+      const mrrPct     = mrrGoal > 0 ? (totalMrr / mrrGoal) * 100 : 0;
+      const avgProd    = attended.length ? attended.reduce((s, d) => s + (d.productivityPct ?? 0), 0) / attended.length : 0;
+      const instaDays  = attended.filter(d => (d.instascoreConvos ?? 0) >= 5);
+      const avgInsta   = instaDays.length ? instaDays.reduce((s, d) => s + (d.instascorePct ?? 0), 0) / instaDays.length : 0;
+      const attRate    = weekDays.length ? attended.length / weekDays.length : 0;
+      return { name, mrrPct, avgProd, avgInsta, attRate };
+    });
+    const n = memberStats.length || 1;
+    houseStats[house] = {
+      members: memberStats,
+      avgMrrPct:  memberStats.reduce((s, m) => s + m.mrrPct,  0) / n,
+      avgProd:    memberStats.reduce((s, m) => s + m.avgProd,  0) / n,
+      avgInsta:   memberStats.reduce((s, m) => s + m.avgInsta, 0) / n,
+      avgAtt:     memberStats.reduce((s, m) => s + m.attRate,  0) / n,
+    };
+  }
+
+  const rank = (key) => [...houses].sort((a, b) => houseStats[b][key] - houseStats[a][key]);
+  const attQualifiers = houses.filter(h => houseStats[h].avgAtt >= 0.95);
+  const attRanked = attQualifiers.length ? attQualifiers.sort((a, b) => houseStats[b].avgAtt - houseStats[a].avgAtt) : rank('avgAtt');
+
+  // Weekly KP, fortress %, and attendance % per house
+  const weeklyKp = {}, fortressPcts = {}, attendancePcts = {};
+  for (const house of houses) {
+    const members = Object.entries(data.reps).filter(([, r]) => r.house === house);
+    let kp = 0;
+    const fortVals = [], totalDays = { n: 0 }, attendedDays = { n: 0 };
+    for (const [name, r] of members) {
+      for (const [date, day] of Object.entries(r.days ?? {})) {
+        if (date < range.start || date > range.end) continue;
+        const pts = calcDayPoints(day);
+        kp += pts.total;
+        if (day.attended) {
+          const hb = calcHouseDayBonus(house, date, data.reps);
+          kp += (hb.productivityBonus ?? 0) + (hb.attendanceBonus ?? 0);
+        }
+        totalDays.n++;
+        if (day.attended) attendedDays.n++;
+        if (day.fortressPct != null) fortVals.push(day.fortressPct);
+      }
+      for (const bonus of r.bonuses ?? []) {
+        if (bonus.date >= range.start && bonus.date <= range.end) kp += bonus.amount ?? 0;
+      }
+    }
+    weeklyKp[house] = kp;
+    fortressPcts[house] = fortVals.length ? Math.round(fortVals.reduce((s, v) => s + v, 0) / fortVals.length) : null;
+    attendancePcts[house] = totalDays.n ? Math.round((attendedDays.n / totalDays.n) * 100) : null;
+  }
+
+  return {
+    week, ...range, houseStats,
+    weeklyKp, fortress: fortressPcts, attendance: attendancePcts,
+    winners: {
+      goldRush:     rank('avgMrrPct')[0],
+      hustleSprint: rank('avgProd')[0],
+      sharpshooter: rank('avgInsta')[0],
+      attendance:   attRanked[0],
+    },
+    awarded: data.weeklyBattles?.[week]?.awarded ?? false,
+    fortressWinner: data.weeklyBattles?.[week]?.fortress ?? null,
+  };
+}
+
+// ── Daily Raid auto-detection ──────────────────────────────────────────────────
+function detectDailyRaid(reps) {
+  const dates = [...new Set(Object.values(reps).flatMap(r => Object.keys(r.days ?? {})))].sort();
+  const latest = dates[dates.length - 1];
+  if (!latest) return null;
+  const entries = Object.entries(reps)
+    .map(([name, r]) => ({ name, house: r.house, day: r.days[latest] }))
+    .filter(e => e.day?.attended);
+  if (!entries.length) return null;
+  const best = (arr, fn) => arr.reduce((a, b) => fn(b) > fn(a) ? b : a, arr[0]);
+  const sharpCandidates = entries.filter(e => (e.day.instascoreConvos ?? 0) >= 5);
+  return {
+    date: latest,
+    mrr:    { name: best(entries, e => e.day.mrrDollars ?? 0).name,      house: best(entries, e => e.day.mrrDollars ?? 0).house,      value: `$${best(entries, e => e.day.mrrDollars ?? 0).day.mrrDollars}` },
+    hustle: { name: best(entries, e => e.day.productivityPct ?? 0).name,  house: best(entries, e => e.day.productivityPct ?? 0).house,  value: `${best(entries, e => e.day.productivityPct ?? 0).day.productivityPct}%` },
+    sharp:  sharpCandidates.length ? { name: best(sharpCandidates, e => e.day.instascorePct ?? 0).name, house: best(sharpCandidates, e => e.day.instascorePct ?? 0).house, value: `${best(sharpCandidates, e => e.day.instascorePct ?? 0).day.instascorePct}%` } : null,
+  };
+}
+
+// ── Contest routes ─────────────────────────────────────────────────────────────
+
+app.post('/api/contest/verify-pin', requirePin, (_req, res) => res.json({ ok: true }));
+
+app.get('/api/contest', (_req, res) => {
+  try {
+    const data = readContest();
+    const standings = computeStandings(data);
+    standings.dailyRaid = detectDailyRaid(data.reps);
+    res.json(standings);
+  }
+  catch (err) { console.error('❌ [contest]', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// Save a rep's daily raw entry
+app.put('/api/contest/reps/:name/days/:date', requirePin, (req, res) => {
+  const { name, date } = req.params;
+  if (!DATE_RE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  const data = readContest();
+  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
+  data.reps[name].days = data.reps[name].days ?? {};
+  data.reps[name].days[date] = req.body ?? {};
+  writeContest(data);
+  const pts = calcDayPoints(req.body ?? {});
+  res.json({ ok: true, points: pts });
+});
+
+// Get a rep's daily entry (for pre-filling the CMS form)
+app.get('/api/contest/reps/:name/days/:date', requirePin, (req, res) => {
+  const { name, date } = req.params;
+  if (!DATE_RE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  const data = readContest();
+  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
+  res.json(data.reps[name].days?.[date] ?? null);
+});
+
+// Get weekly house averages + auto-detected battle winners (public — no PIN needed)
+app.get('/api/contest/weekly/:week', (req, res) => {
+  const { week } = req.params;
+  if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
+  res.json(getWeeklyStats(readContest(), week));
+});
+
+// Award weekly battles: adds +5 pt rep bonus for each battle winner's house members
+app.post('/api/contest/weekly/:week/award', requirePin, (req, res) => {
+  const { week } = req.params;
+  if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
+  const data  = readContest();
+  const stats = getWeeklyStats(data, week);
+  if (data.weeklyBattles[week]?.awarded) return res.status(400).json({ error: 'week already awarded' });
+
+  const battleNames = { goldRush: 'Gold Rush', hustleSprint: 'Hustle Sprint', sharpshooter: 'Sharpshooter', attendance: 'Attendance' };
+  const awarded = [];
+  for (const [battle, label] of Object.entries(battleNames)) {
+    const winnerHouse = stats.winners[battle];
+    if (!winnerHouse) continue;
+    for (const [repName, r] of Object.entries(data.reps)) {
+      if (r.house !== winnerHouse) continue;
+      const bonus = { id: String(Date.now() + Math.random()), type: 'weekly_battle', amount: 5,
+                      note: `Week ${week} ${label} — House ${winnerHouse} wins`, date: new Date().toISOString().slice(0, 10) };
+      r.bonuses = r.bonuses ?? [];
+      r.bonuses.push(bonus);
+      awarded.push({ rep: repName, battle, bonus });
+    }
+  }
+  data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), ...stats.winners, awarded: true };
+  writeContest(data);
+  res.json({ ok: true, awarded });
+});
+
+// Record fortress winner (prize tracking only — no KP)
+app.put('/api/contest/weekly/:week/fortress', requirePin, (req, res) => {
+  const { week } = req.params;
+  if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
+  const { winner } = req.body ?? {};
+  if (winner && !VALID_HOUSES.has(winner)) return res.status(400).json({ error: 'invalid house' });
+  const data = readContest();
+  data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), fortress: winner ?? null };
+  writeContest(data);
+  res.json({ ok: true });
+});
+
+// Add a bonus to a rep
+app.post('/api/contest/reps/:name/bonuses', requirePin, (req, res) => {
+  const { name } = req.params;
+  const { type, amount, note, date } = req.body ?? {};
+  if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
+  if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
+  const data = readContest();
+  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
+  const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
+  data.reps[name].bonuses.push(bonus);
+  writeContest(data);
+  res.json({ ok: true, bonus });
+});
+
+// Remove a bonus from a rep
+app.delete('/api/contest/reps/:name/bonuses/:id', requirePin, (req, res) => {
+  const { name, id } = req.params;
+  const data = readContest();
+  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
+  const before = data.reps[name].bonuses.length;
+  data.reps[name].bonuses = data.reps[name].bonuses.filter(b => b.id !== id);
+  if (data.reps[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
+  writeContest(data);
+  res.json({ ok: true });
+});
+
+// Add a bonus to a house
+app.post('/api/contest/houses/:name/bonuses', requirePin, (req, res) => {
+  const { name } = req.params;
+  if (!VALID_HOUSES.has(name)) return res.status(404).json({ error: 'house not found' });
+  const { type, amount, note, date } = req.body ?? {};
+  if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
+  if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
+  const data = readContest();
+  const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
+  data.houses[name].bonuses.push(bonus);
+  writeContest(data);
+  res.json({ ok: true, bonus });
+});
+
+// Remove a bonus from a house
+app.delete('/api/contest/houses/:name/bonuses/:id', requirePin, (req, res) => {
+  const { name, id } = req.params;
+  if (!VALID_HOUSES.has(name)) return res.status(404).json({ error: 'house not found' });
+  const data = readContest();
+  const before = data.houses[name].bonuses.length;
+  data.houses[name].bonuses = data.houses[name].bonuses.filter(b => b.id !== id);
+  if (data.houses[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
+  writeContest(data);
+  res.json({ ok: true });
+});
 
 // ── Catch-all: serve index.html for client-side routing (production only) ──────
 if (!isDev) {

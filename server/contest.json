@@ -1,0 +1,291 @@
+{
+  "reps": {
+    "Amber": {
+      "house": "Grind",
+      "days": {
+        "2026-04-30": {
+          "attended": true,
+          "onTime": true,
+          "productivityPct": 70,
+          "instascorePct": 80,
+          "instascoreConvos": 20,
+          "mrrDollars": 200,
+          "fortressPct": 26.8,
+          "upgrades": {
+            "anyToEssentials": 3,
+            "essentialsToPlus": 0,
+            "plusToAio": 0,
+            "basicToPlus": 1,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 1,
+            "payrollPass": 0
+          }
+        }
+      },
+      "bonuses": [
+        {
+          "id": "1777669617843.0762",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.1782",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.5457",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.8293",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-01"
+        }
+      ]
+    },
+    "Philip": {
+      "house": "Grind",
+      "days": {},
+      "bonuses": [
+        {
+          "id": "1777669617843.1992",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.454",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.0037",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.8008",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-01"
+        }
+      ]
+    },
+    "Angel": {
+      "house": "Grind",
+      "days": {},
+      "bonuses": [
+        {
+          "id": "1777669617843.7983",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.1064",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.881",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.881",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-01"
+        }
+      ]
+    },
+    "Stephen": {
+      "house": "Grind",
+      "days": {},
+      "bonuses": [
+        {
+          "id": "1777669617843.5981",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.1643",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.8477",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.831",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-01"
+        }
+      ]
+    },
+    "Priscilla": {
+      "house": "Grind",
+      "days": {},
+      "bonuses": [
+        {
+          "id": "1777669617843.1357",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.6594",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.1787",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-01"
+        },
+        {
+          "id": "1777669617843.7039",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-01"
+        }
+      ]
+    },
+    "Nick": {
+      "house": "Reign",
+      "days": {},
+      "bonuses": []
+    },
+    "Eric": {
+      "house": "Reign",
+      "days": {},
+      "bonuses": []
+    },
+    "Courtney": {
+      "house": "Reign",
+      "days": {},
+      "bonuses": []
+    },
+    "Rosalyn": {
+      "house": "Reign",
+      "days": {},
+      "bonuses": []
+    },
+    "Melissa": {
+      "house": "Legacy",
+      "days": {},
+      "bonuses": []
+    },
+    "David": {
+      "house": "Legacy",
+      "days": {},
+      "bonuses": []
+    },
+    "Shakilla": {
+      "house": "Legacy",
+      "days": {},
+      "bonuses": []
+    },
+    "Lois": {
+      "house": "Legacy",
+      "days": {},
+      "bonuses": []
+    }
+  },
+  "houses": {
+    "Grind": {
+      "bonuses": []
+    },
+    "Reign": {
+      "bonuses": []
+    },
+    "Legacy": {
+      "bonuses": []
+    }
+  },
+  "weeklyBattles": {
+    "1": {
+      "goldRush": "Grind",
+      "hustleSprint": "Grind",
+      "sharpshooter": "Grind",
+      "attendance": "Grind",
+      "fortress": null,
+      "awarded": true
+    },
+    "2": {
+      "goldRush": null,
+      "hustleSprint": null,
+      "sharpshooter": null,
+      "attendance": null,
+      "fortress": null,
+      "awarded": false
+    },
+    "3": {
+      "goldRush": null,
+      "hustleSprint": null,
+      "sharpshooter": null,
+      "attendance": null,
+      "fortress": null,
+      "awarded": false
+    },
+    "4": {
+      "goldRush": null,
+      "hustleSprint": null,
+      "sharpshooter": null,
+      "attendance": null,
+      "fortress": null,
+      "awarded": false
+    }
+  },
+  "goals": {
+    "mrr": {
+      "default": 1500,
+      "Angel": 1050,
+      "Eric": 1050,
+      "Lois": 750,
+      "Stephen": 750
+    },
+    "instascore": 80,
+    "productivity": 75
+  }
+}

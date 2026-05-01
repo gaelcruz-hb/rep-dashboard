@@ -316,7 +316,7 @@ export function RepDetail() {
     month: 'This Month', last_month: 'Last Month',
     last_30: 'Last 30 Days',
   };
-  const PRIOR_LABEL = { week: 'Last Week', last_week: 'Week Before', month: 'Last Month', last_month: '2 Months Ago' };
+  const PRIOR_LABEL = { week: 'Last Week', last_week: 'Week Before', month: 'Last Month', last_month: '2 Months Ago', last_30: 'Prev 30 Days' };
   const periodLabel = customRangeMode && customStartDate && customEndDate
     ? `${customStartDate} – ${customEndDate}`
     : (PERIOD_LABEL[periodFilter] ?? 'This Week');

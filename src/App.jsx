@@ -1,4 +1,6 @@
 import { DashboardProvider, useDashboard } from './context/DashboardContext';
+import { HomieContest }    from './pages/HomieContest';
+import { HomieContestCMS } from './pages/HomieContestCMS';
 import { Header }          from './components/layout/Header';
 import { GoalsBanner }     from './components/layout/GoalsBanner';
 import { Controls }        from './components/layout/Controls';
@@ -41,6 +43,9 @@ function Dashboard() {
 }
 
 export default function App() {
+  const path = window.location.pathname;
+  if (path === '/homie-contest')     return <HomieContest />;
+  if (path === '/homie-contest/cms') return <HomieContestCMS />;
   return (
     <DashboardProvider>
       <Dashboard />

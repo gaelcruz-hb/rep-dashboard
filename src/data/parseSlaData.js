@@ -49,13 +49,10 @@ export function parseSlaData(raw, slaThresholdHrs = 24) {
     const isClosed         = c.IsClosed === true || c.Status === 'Closed';
     // Cases where the rep has reached out and is waiting on the client — not a breach
     const waitingOnClient  = !isClosed && (c.Status === 'Pending' || c.Status === 'On Hold');
-    // Breach / risk: use respHrs when available; otherwise measure from last interaction
-    const isBreached = !waitingOnClient && (respHrs != null
-      ? respHrs > slaThresholdHrs
-      : lastActivityHrs > slaThresholdHrs);
-    const isAtRisk   = !waitingOnClient && !isBreached && (respHrs != null
-      ? respHrs > slaThresholdHrs * 0.75
-      : lastActivityHrs > slaThresholdHrs * 0.75);
+    // Breach / risk: only flag cases with an actual recorded response time.
+    // Null-response cases are excluded from KPIs and shown with a "No Response" tag instead.
+    const isBreached = respHrs != null && !waitingOnClient && respHrs > slaThresholdHrs;
+    const isAtRisk   = respHrs != null && !waitingOnClient && !isBreached && respHrs > slaThresholdHrs * 0.75;
     // slaPct: proportion of threshold consumed (capped at 100)
     const slaPct = respHrs != null
       ? Math.min(100, Math.round((respHrs / slaThresholdHrs) * 100))
@@ -75,6 +72,7 @@ export function parseSlaData(raw, slaThresholdHrs = 24) {
         isBreached,
         isAtRisk,
         waitingOnClient,
+        noResponse: respHrs == null && !isClosed && !waitingOnClient,
         respHrs,
       });
     }
@@ -87,17 +85,18 @@ export function parseSlaData(raw, slaThresholdHrs = 24) {
     const { cases, responseTimes, name } = rep;
     // cases[] only contains open cases; responseTimes includes all (open + closed) for accuracy
     const total = cases.length;
-
-    const breached = cases.filter(c => c.isBreached);
-    const atRisk   = cases.filter(c => c.isAtRisk);
-    const metCount = cases.filter(c => !c.isBreached).length;
+    // KPI metrics only count cases with a logged response time (null-response cases are excluded)
+    const respondedCases = cases.filter(c => c.respHrs != null);
+    const rCount = respondedCases.length;
 
     return {
       name,
       openCases:         total,
-      slaBreachCount:    breached.length,
-      slaRiskCount:      atRisk.length,
-      slaMeetPct:        total > 0 ? parseFloat(((metCount / total) * 100).toFixed(1)) : 0,
+      slaBreachCount:    respondedCases.filter(c => c.isBreached).length,
+      slaRiskCount:      respondedCases.filter(c => c.isAtRisk).length,
+      slaMeetPct:        rCount > 0
+        ? parseFloat((respondedCases.filter(c => !c.isBreached).length / rCount * 100).toFixed(1))
+        : 0,
       avgResponseHrs:    responseTimes.length > 0
         ? parseFloat((responseTimes.reduce((s, v) => s + v, 0) / responseTimes.length).toFixed(2))
         : 0,

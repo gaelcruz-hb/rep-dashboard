@@ -468,9 +468,17 @@ function WeeklyBattlesTab({ pin }) {
   useEffect(() => { load(week); }, [week]);
 
   async function award() {
-    if (!window.confirm(`Award Week ${week} battle bonuses (+5 pts per rep per battle won)? This cannot be undone.`)) return;
+    if (!window.confirm(`Award Week ${week} battle bonuses (+5 pts per rep per battle won)?`)) return;
     setAwarding(true);
     await apiFetch(`/weekly/${week}/award`, 'POST', pin);
+    await load(week);
+    setAwarding(false);
+  }
+
+  async function revokeAward() {
+    if (!window.confirm(`Remove Week ${week} battle bonuses from all reps? You can re-award them after.`)) return;
+    setAwarding(true);
+    await apiFetch(`/weekly/${week}/award`, 'DELETE', pin);
     await load(week);
     setAwarding(false);
   }
@@ -537,10 +545,16 @@ function WeeklyBattlesTab({ pin }) {
             })}
           </div>
 
-          {/* Award button */}
+          {/* Award / Revoke */}
           {stats.awarded ? (
-            <div style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: C.greenBright, padding: '12px 16px', background: `${C.green}22`, border: `1px solid ${C.green}44`, borderRadius: 8, marginBottom: 20 }}>
-              ✓ Week {week} battle bonuses have been awarded.
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', background: `${C.green}22`, border: `1px solid ${C.green}44`, borderRadius: 8, marginBottom: 20 }}>
+              <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: C.greenBright }}>
+                ✓ Week {week} battle bonuses have been awarded.
+              </span>
+              <button onClick={revokeAward} disabled={awarding}
+                style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, fontWeight: 700, background: `${C.danger}22`, color: C.danger, border: `1px solid ${C.danger}55`, borderRadius: 6, padding: '6px 14px', cursor: awarding ? 'not-allowed' : 'pointer', opacity: awarding ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+                {awarding ? '…' : '🗑 Remove Award'}
+              </button>
             </div>
           ) : (
             <button onClick={award} disabled={awarding}

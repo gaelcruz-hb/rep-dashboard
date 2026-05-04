@@ -1377,6 +1377,23 @@ app.post('/api/contest/weekly/:week/award', requirePin, (req, res) => {
   res.json({ ok: true, awarded });
 });
 
+// Revoke weekly battle award: removes all weekly_battle bonuses for this week from all reps
+app.delete('/api/contest/weekly/:week/award', requirePin, (req, res) => {
+  const { week } = req.params;
+  if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
+  const data = readContest();
+  const prefix = `Week ${week} `;
+  let removed = 0;
+  for (const r of Object.values(data.reps)) {
+    const before = (r.bonuses ?? []).length;
+    r.bonuses = (r.bonuses ?? []).filter(b => !(b.type === 'weekly_battle' && (b.note ?? '').startsWith(prefix)));
+    removed += before - r.bonuses.length;
+  }
+  data.weeklyBattles[week] = { goldRush: null, hustleSprint: null, sharpshooter: null, attendance: null, fortress: data.weeklyBattles[week]?.fortress ?? null, awarded: false };
+  writeContest(data);
+  res.json({ ok: true, removed });
+});
+
 // Record fortress winner (prize tracking only — no KP)
 app.put('/api/contest/weekly/:week/fortress', requirePin, (req, res) => {
   const { week } = req.params;

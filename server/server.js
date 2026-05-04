@@ -1139,6 +1139,7 @@ function calcDayPoints(day) {
   const upgrades =
     (day.upgrades?.anyToEssentials  ?? 0) * 1 +
     (day.upgrades?.essentialsToPlus ?? 0) * 2 +
+    (day.upgrades?.essentialsToAio  ?? 0) * 4 +
     (day.upgrades?.plusToAio        ?? 0) * 2 +
     (day.upgrades?.basicToPlus      ?? 0) * 3 +
     (day.upgrades?.basicToAio       ?? 0) * 5;

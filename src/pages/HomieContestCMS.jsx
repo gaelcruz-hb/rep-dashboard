@@ -54,6 +54,7 @@ function calcPts(entry) {
   const u = entry.upgrades ?? {};
   pts += (u.anyToEssentials  ?? 0) * 1;
   pts += (u.essentialsToPlus ?? 0) * 2;
+  pts += (u.essentialsToAio  ?? 0) * 4;
   pts += (u.plusToAio        ?? 0) * 2;
   pts += (u.basicToPlus      ?? 0) * 3;
   pts += (u.basicToAio       ?? 0) * 5;
@@ -76,7 +77,7 @@ function emptyEntry() {
   return {
     attended: false, onTime: false,
     productivityPct: '', instascorePct: '', instascoreConvos: '', mrrDollars: '', fortressPct: '',
-    upgrades: { anyToEssentials: '', essentialsToPlus: '', plusToAio: '', basicToPlus: '', basicToAio: '' },
+    upgrades: { anyToEssentials: '', essentialsToPlus: '', essentialsToAio: '', plusToAio: '', basicToPlus: '', basicToAio: '' },
     addons: { hourlyPay: '', payrollPass: '' },
     _expanded: false,
   };
@@ -96,6 +97,7 @@ function toPayload(entry) {
     upgrades: {
       anyToEssentials:  num(entry.upgrades?.anyToEssentials),
       essentialsToPlus: num(entry.upgrades?.essentialsToPlus),
+      essentialsToAio:  num(entry.upgrades?.essentialsToAio),
       plusToAio:        num(entry.upgrades?.plusToAio),
       basicToPlus:      num(entry.upgrades?.basicToPlus),
       basicToAio:       num(entry.upgrades?.basicToAio),
@@ -120,6 +122,7 @@ function fromServer(serverDay) {
     upgrades: {
       anyToEssentials:  serverDay.upgrades?.anyToEssentials  ?? '',
       essentialsToPlus: serverDay.upgrades?.essentialsToPlus ?? '',
+      essentialsToAio:  serverDay.upgrades?.essentialsToAio  ?? '',
       plusToAio:        serverDay.upgrades?.plusToAio        ?? '',
       basicToPlus:      serverDay.upgrades?.basicToPlus      ?? '',
       basicToAio:       serverDay.upgrades?.basicToAio       ?? '',
@@ -290,8 +293,9 @@ function RepDayRow({ name, house, entry, onChange, onSave, saving, saved }) {
         <div style={{ borderTop: `1px solid ${C.border}44`, padding: '10px 12px', background: `${C.surface}88`, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
           {[
             { key: 'anyToEssentials',  label: '→ Essentials',      pts: 1 },
-            { key: 'essentialsToPlus', label: 'Ess → Plus',         pts: 2 },
-            { key: 'plusToAio',        label: 'Plus → AIO',         pts: 2 },
+            { key: 'essentialsToPlus', label: 'Ess → Plus',  pts: 2 },
+            { key: 'essentialsToAio',  label: 'Ess → AIO',  pts: 4 },
+            { key: 'plusToAio',        label: 'Plus → AIO', pts: 2 },
             { key: 'basicToPlus',      label: 'Basic → Plus',       pts: 3 },
             { key: 'basicToAio',       label: 'Basic → AIO',        pts: 5 },
           ].map(({ key, label, pts: p }) => (

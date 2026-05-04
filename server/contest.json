@@ -5,46 +5,423 @@
       "days": {
         "2026-04-30": {
           "attended": true,
-          "onTime": true,
-          "productivityPct": 70,
-          "instascorePct": 80,
-          "instascoreConvos": 20,
-          "mrrDollars": 200,
-          "fortressPct": 26.8,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
           "upgrades": {
-            "anyToEssentials": 3,
+            "anyToEssentials": 0,
             "essentialsToPlus": 0,
+            "essentialsToAio": 0,
             "plusToAio": 0,
-            "basicToPlus": 1,
+            "basicToPlus": 0,
             "basicToAio": 0
           },
           "addons": {
-            "hourlyPay": 1,
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-03": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": 0,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 5,
+            "basicToPlus": 0,
+            "basicToAio": 2
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-04": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": 0,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
             "payrollPass": 0
           }
         }
       },
-      "bonuses": []
+      "bonuses": [
+        {
+          "id": "1777911411277.0928",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.2185",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.688",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.3179",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-04"
+        }
+      ]
     },
     "Philip": {
       "house": "Grind",
-      "days": {},
-      "bonuses": []
+      "days": {
+        "2026-04-30": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-03": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": 0,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 1,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-04": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": 0,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        }
+      },
+      "bonuses": [
+        {
+          "id": "1777911411277.0928",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.455",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.1196",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.238",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-04"
+        }
+      ]
     },
     "Angel": {
       "house": "Grind",
-      "days": {},
-      "bonuses": []
+      "days": {
+        "2026-04-30": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-03": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        }
+      },
+      "bonuses": [
+        {
+          "id": "1777911411277.186",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.3743",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.1821",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.8904",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-04"
+        }
+      ]
     },
     "Stephen": {
       "house": "Grind",
-      "days": {},
-      "bonuses": []
+      "days": {
+        "2026-04-30": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-03": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        }
+      },
+      "bonuses": [
+        {
+          "id": "1777911411278.142",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.7297",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.8713",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.1243",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-04"
+        }
+      ]
     },
     "Priscilla": {
       "house": "Grind",
-      "days": {},
-      "bonuses": []
+      "days": {
+        "2026-04-30": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        },
+        "2026-05-03": {
+          "attended": false,
+          "onTime": false,
+          "productivityPct": 0,
+          "instascorePct": 0,
+          "instascoreConvos": 0,
+          "mrrDollars": 0,
+          "fortressPct": null,
+          "upgrades": {
+            "anyToEssentials": 0,
+            "essentialsToPlus": 0,
+            "essentialsToAio": 0,
+            "plusToAio": 0,
+            "basicToPlus": 0,
+            "basicToAio": 0
+          },
+          "addons": {
+            "hourlyPay": 0,
+            "payrollPass": 0
+          }
+        }
+      },
+      "bonuses": [
+        {
+          "id": "1777911411278.5903",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Gold Rush — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.8003",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Hustle Sprint — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.9158",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Sharpshooter — House Grind wins",
+          "date": "2026-05-04"
+        },
+        {
+          "id": "1777911411278.5488",
+          "type": "weekly_battle",
+          "amount": 5,
+          "note": "Week 1 Attendance — House Grind wins",
+          "date": "2026-05-04"
+        }
+      ]
     },
     "Nick": {
       "house": "Reign",
@@ -100,12 +477,12 @@
   },
   "weeklyBattles": {
     "1": {
-      "goldRush": null,
-      "hustleSprint": null,
-      "sharpshooter": null,
-      "attendance": null,
-      "fortress": null,
-      "awarded": false
+      "goldRush": "Grind",
+      "hustleSprint": "Grind",
+      "sharpshooter": "Grind",
+      "attendance": "Grind",
+      "fortress": "Grind",
+      "awarded": true
     },
     "2": {
       "goldRush": null,

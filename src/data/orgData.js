@@ -53,6 +53,7 @@ export const ORG = [
       { name: 'Inbound Reps', members: [
         'Amber Henley', 'Courtney Whaley', 'Marcos Calero', 'Philip De Villa',
         'Rosalyn Lee', 'Shakilla Wright', 'Eric Herrera', 'David Nguyen', 'Angel Marquez', 'Gael Cruz',
+        'Stephen Vargas', 'Lois Calvo',
         // active: false — not counted in HC
         { name: 'Lilly Hill', active: false },
       ]},

@@ -48,6 +48,30 @@ function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = fals
   );
 }
 
+// ── MRR Added card (no goal — shows delta vs prior period) ───────────────────
+function MrrCard({ total, prior, priorLabel, upgradeCount, loading }) {
+  const delta = prior != null ? total - prior : null;
+  const deltaColor = delta == null ? 'text-muted' : delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-muted';
+  const deltaStr   = delta == null ? null
+    : delta > 0 ? `+$${delta.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+    : delta < 0 ? `-$${Math.abs(delta).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+    : '—';
+  return (
+    <div className="bg-surface border border-border rounded-[10px] p-4 pt-5 relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
+      <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">MRR Added</div>
+      <div className="text-2xl font-bold font-mono leading-none mb-1">
+        {loading ? '…' : `$${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+      </div>
+      {deltaStr ? (
+        <div className={`text-[10px] font-mono mt-1 ${deltaColor}`}>{deltaStr} vs {priorLabel}</div>
+      ) : (
+        <div className="text-[10px] text-muted mt-1">{loading ? '' : `${upgradeCount} upgrade${upgradeCount !== 1 ? 's' : ''}`}</div>
+      )}
+    </div>
+  );
+}
+
 // ── Status badge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status }) {
   const cls = {
@@ -249,6 +273,9 @@ export function RepDetail() {
   const closedPeriod      = detail?.closedPeriod      ?? 0;
   const closedPriorPeriod = detail?.closedPriorPeriod  ?? 0;
   const hasPrior          = detail?.hasPrior           ?? true;
+  const mrrTotal          = detail?.mrrTotal           ?? 0;
+  const mrrPriorTotal     = detail?.mrrPriorTotal      ?? null;
+  const mrrUpgrades       = detail?.mrrUpgrades        ?? [];
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -471,6 +498,13 @@ export function RepDetail() {
       {/* KPI cards */}
       <div className="grid gap-3.5 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
         {metrics.map(m => <RepKpiCard key={m.label} {...m} />)}
+        <MrrCard
+          total={mrrTotal}
+          prior={hasPrior ? mrrPriorTotal : null}
+          priorLabel={priorLabel}
+          upgradeCount={mrrUpgrades.length}
+          loading={detailLoading}
+        />
       </div>
 
       {/* Instascore rubric heatmap */}
@@ -857,6 +891,63 @@ export function RepDetail() {
             </div>
           </div>
         </CardBody>
+      </Card>
+
+      {/* MRR Upgrades table */}
+      <Card className="mb-4">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <span className="text-xs font-semibold text-text">MRR Upgrades</span>
+          <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : mrrUpgrades.length} upgrade{mrrUpgrades.length !== 1 ? 's' : ''} · ${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} total</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                {['Date', 'Company', 'Location', 'Most Recent Upgrade', 'From → To', 'MRR $', ''].map(h => (
+                  <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {detailLoading ? (
+                <tr><td colSpan={7} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading upgrades…</td></tr>
+              ) : mrrUpgrades.length === 0 ? (
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted text-xs font-mono">No upgrades in this period</td></tr>
+              ) : mrrUpgrades.map((u, i) => (
+                <tr key={i} className="hover:bg-surface2 transition-colors">
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                    {u.markedMonth ? String(u.markedMonth).slice(0, 10) : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">{u.companyId ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">{u.locationName ?? u.locationId ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                    {u.mostRecentUpgrade ? String(u.mostRecentUpgrade).slice(0, 10) : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                    <span className="text-muted">{u.startTier ?? '—'}</span>
+                    <span className="mx-1.5 text-border">→</span>
+                    <span className="text-accent font-medium">{u.endTier ?? '—'}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-success whitespace-nowrap">
+                    {u.netPriceChange ? `+$${Number(u.netPriceChange).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                    {u.upgradeId ? (
+                      <a
+                        href={`https://app.joinhomebase.com/admin/upsells/${u.upgradeId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-accent hover:underline font-mono text-[11px]"
+                      >
+                        View
+                      </a>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       {/* Cases card */}

@@ -33,6 +33,8 @@ const LAI_SCORE  = 'prod_raw.level_ai.homebase_instascore';
 const LAI_ASR    = 'prod_raw.level_ai.homebase_level_asr_asrlog';
 const LAI_USER   = 'prod_raw.level_ai.homebase_accounts_user';
 const LAI_QA     = 'prod_raw.level_ai.homebase_qa_metrics';
+const UPGRADES   = 'prod_redshift_replica.bizops.cs_marked_upgrades_with_trials';
+const LOCATIONS  = 'stage_raw.appdb.locations';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -103,6 +105,33 @@ function closedSince({ period = 'week', startDate, endDate } = {}, alias = '') {
   if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
     return `DATE(${col}) BETWEEN '${startDate}' AND '${endDate}'`;
   return `DATE(${col}) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+}
+
+function mrrDateFilter(period, startDate, endDate) {
+  // marked_month is always the 1st of the month, so use marked_at (the actual
+  // timestamp) for week/day-level periods and marked_month for month-level ones.
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `DATE(upg.marked_at) BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':
+      return `DATE(upg.marked_at) = CURRENT_DATE()`;
+    case 'yesterday':
+      return `DATE(upg.marked_at) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'week':
+      return `DATE(upg.marked_at) >= DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_week':
+      return `DATE(upg.marked_at) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(upg.marked_at) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(upg.marked_month) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(upg.marked_month) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `DATE(upg.marked_at) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(upg.marked_at) < CURRENT_DATE()`;
+    case 'quarter':
+      return `DATE(upg.marked_month) >= DATE_TRUNC('QUARTER', CURRENT_DATE())`;
+    case 'year':
+      return `DATE(upg.marked_month) >= DATE_TRUNC('YEAR', CURRENT_DATE())`;
+    default: // 'month' and anything else → current month via marked_month
+      return `DATE(upg.marked_month) >= DATE_TRUNC('MONTH', CURRENT_DATE())`;
+  }
 }
 
 function ownerWhere({ ownerIds, ownerId } = {}) {
@@ -216,6 +245,14 @@ app.get("/api/rep-detail", async (req, res) => {
   const priorClause = isCustom ? null : priorClosedClause(period);
   const hasPrior = priorClause !== null;
 
+  const mrrFilter      = mrrDateFilter(period, startDate, endDate);
+  // Prior period: week/day-level uses marked_at; month-level uses marked_month
+  const mrrPriorFilter = hasPrior && priorClause
+    ? (['week', 'last_week', 'today', 'yesterday', 'last_30'].includes(period)
+        ? priorClause.replace(/DATE\(closeddate\)/g, 'DATE(upg.marked_at)')
+        : priorClause.replace(/DATE\(closeddate\)/g, 'DATE(upg.marked_month)'))
+    : null;
+
   try {
     const queries = [
       // 1. All currently-open cases for this rep (not period-filtered)
@@ -246,9 +283,18 @@ app.get("/api/rep-detail", async (req, res) => {
              WHERE is_current = true
              AND DATE(createddate) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}
              AND case_response_time_hours__c IS NOT NULL ${owId}`),
+      // 6. MRR upgrades for current period
+      query(`SELECT upg.marked_upgrade_id, upg.marked_month, upg.upgrade_at, upg.most_recent_upgrade, upg.company_id, upg.location_id,
+                    upg.start_tier, upg.end_tier, upg.net_price_change, loc.name AS location_name
+             FROM ${UPGRADES} upg
+             JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+             LEFT JOIN ${LOCATIONS} loc ON loc.id = upg.location_id
+             WHERE cu.id = '${ownerId}'
+               AND ${mrrFilter}
+             ORDER BY upg.marked_month DESC, upg.upgrade_at DESC`),
     ];
 
-    // 6. Prior period closed count — only when a comparison exists
+    // 7. Prior period closed count — only when a comparison exists
     if (hasPrior) {
       queries.push(
         query(`SELECT COUNT(*) AS cnt FROM ${CASE}
@@ -257,7 +303,33 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
-    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, priorRow] = await Promise.all(queries);
+    // 8. Prior period MRR total — only when a comparison exists
+    if (mrrPriorFilter) {
+      queries.push(
+        query(`SELECT SUM(upg.net_price_change) AS mrr_prior
+               FROM ${UPGRADES} upg
+               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               WHERE cu.id = '${ownerId}'
+                 AND ${mrrPriorFilter}`)
+      );
+    }
+
+    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, mrrRows, priorRow, mrrPriorRow] = await Promise.all(queries);
+
+    const mrrUpgrades = (mrrRows ?? []).map(r => ({
+      upgradeId:         r.marked_upgrade_id,
+      markedMonth:       r.marked_month,
+      upgradeAt:         r.upgrade_at,
+      mostRecentUpgrade: r.most_recent_upgrade,
+      companyId:         r.company_id,
+      locationId:        r.location_id,
+      locationName:      r.location_name ?? null,
+      startTier:         r.start_tier,
+      endTier:           r.end_tier,
+      netPriceChange:    Number(r.net_price_change ?? 0),
+    }));
+    const mrrTotal      = mrrUpgrades.reduce((s, u) => s + u.netPriceChange, 0);
+    const mrrPriorTotal = mrrPriorFilter && mrrPriorRow ? (Number(mrrPriorRow[0]?.mrr_prior ?? 0) || null) : null;
 
     res.json({
       cases:              { records: cases },
@@ -267,6 +339,9 @@ app.get("/api/rep-detail", async (req, res) => {
       avgResponseHrs:     Number(avgRespRow[0]?.avg_hrs ?? 0),
       avgResponseHrsAll:  avgRespAllRow[0]?.avg_hrs_all != null ? Number(avgRespAllRow[0].avg_hrs_all) : null,
       csatData:           { records: csatRows },
+      mrrTotal,
+      mrrPriorTotal,
+      mrrUpgrades,
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);

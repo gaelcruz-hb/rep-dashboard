@@ -144,6 +144,13 @@ function DailyRaidSection({ dailyRaid }) {
     { key: 'sharp',  cat: '🎯 Sharpshooter',   scoreColor: '#7EFFA8', borderColor: 'rgba(34,211,90,0.25)',  bg: 'rgba(34,211,90,0.06)',  anim: 'hc-card-pulse-g 4s ease-in-out infinite 2s', placeholder: '🎯' },
   ];
 
+  const raidLabel = dailyRaid?.date
+    ? (() => {
+        const d = new Date(dailyRaid.date + 'T12:00:00');
+        return `⚡ DAILY RAID — ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}`;
+      })()
+    : '⚡ DAILY RAID WINNERS';
+
   return (
     <div style={{
       background: 'linear-gradient(135deg, rgba(255,229,0,0.06) 0%, rgba(192,59,255,0.06) 100%)',
@@ -152,10 +159,12 @@ function DailyRaidSection({ dailyRaid }) {
     }}>
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg, transparent, #FFE500, transparent)', animation: 'hc-scan 3s ease-in-out infinite', borderRadius: '12px 12px 0 0' }} />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: 4, color: '#FFE500' }}>⚡ YESTERDAY'S DAILY RAID WINNERS</div>
-        <div style={{ fontFamily: "'Barlow', sans-serif", fontSize: '0.55rem', fontWeight: 600, color: 'rgba(255,255,255,0.55)', letterSpacing: 1 }}>
-          {dailyRaid?.date ? `DATA FROM ${dailyRaid.date.toUpperCase()}` : 'NO DATA YET · ENTER DAILY STATS IN CMS'}
-        </div>
+        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.05rem', letterSpacing: 4, color: '#FFE500' }}>{raidLabel}</div>
+        {!dailyRaid?.date && (
+          <div style={{ fontFamily: "'Barlow', sans-serif", fontSize: '0.55rem', fontWeight: 600, color: 'rgba(255,255,255,0.45)', letterSpacing: 1 }}>
+            NO DATA YET · ENTER DAILY STATS IN CMS
+          </div>
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
         {cards.map(({ key, cat, scoreColor, borderColor, bg, anim, placeholder }) => {

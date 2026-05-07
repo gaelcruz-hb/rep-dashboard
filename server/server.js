@@ -1218,6 +1218,7 @@ app.post('/api/reconnect', async (_req, res) => {
 
 // ── GET /health ────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+console.log('[test] deploy check');
 
 // ── Homie Contest CMS ──────────────────────────────────────────────────────────
 const CONTEST_FILE      = path.resolve(__dirname, 'contest.json');

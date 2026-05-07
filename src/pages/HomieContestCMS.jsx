@@ -730,14 +730,16 @@ function BonusesTab({ pin }) {
   );
 }
 
-// ── Export CSV ────────────────────────────────────────────────────────────────
-function ExportRow({ pin }) {
-  const [start, setStart]   = useState('2026-05-04');
-  const [end, setEnd]       = useState('2026-05-29');
-  const [loading, setLoading] = useState(false);
+// ── Export / Import CSV ───────────────────────────────────────────────────────
+function DataTransferBar({ pin }) {
+  const [start, setStart]       = useState('2026-05-04');
+  const [end, setEnd]           = useState('2026-05-29');
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
 
   async function download() {
-    setLoading(true);
+    setExporting(true);
     try {
       const resp = await fetch(`/api/contest/export?start=${start}&end=${end}`, {
         headers: { 'x-contest-pin': pin },
@@ -750,22 +752,64 @@ function ExportRow({ pin }) {
       a.click();
       URL.revokeObjectURL(url);
     } finally {
-      setLoading(false);
+      setExporting(false);
+    }
+  }
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const csv  = await file.text();
+      const resp = await fetch('/api/contest/import', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'x-contest-pin': pin },
+        body:    JSON.stringify({ csv }),
+      });
+      const result = await resp.json();
+      setImportResult(result);
+      setTimeout(() => setImportResult(null), 6000);
+    } finally {
+      setImporting(false);
     }
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>Export:</span>
-      <input type="date" value={start} onChange={e => setStart(e.target.value)}
-        style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
-      <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>→</span>
-      <input type="date" value={end} onChange={e => setEnd(e.target.value)}
-        style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
-      <button onClick={download} disabled={loading || !start || !end}
-        style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, background: `${C.green}25`, color: C.greenBright, border: `1px solid ${C.green}50`, borderRadius: 6, padding: '6px 14px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.5 : 1, whiteSpace: 'nowrap' }}>
-        {loading ? '…' : '📥 CSV'}
-      </button>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      {/* Export */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>Export:</span>
+        <input type="date" value={start} onChange={e => setStart(e.target.value)}
+          style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
+        <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>→</span>
+        <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+          style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
+        <button onClick={download} disabled={exporting || !start || !end}
+          style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, background: `${C.green}25`, color: C.greenBright, border: `1px solid ${C.green}50`, borderRadius: 6, padding: '6px 14px', cursor: exporting ? 'not-allowed' : 'pointer', opacity: exporting ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+          {exporting ? '…' : '📥 CSV'}
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div style={{ width: 1, height: 24, background: C.border }} />
+
+      {/* Import */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <label style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, background: `${C.blue}25`, color: C.blue, border: `1px solid ${C.blue}50`, borderRadius: 6, padding: '6px 14px', cursor: importing ? 'not-allowed' : 'pointer', opacity: importing ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+          {importing ? '…' : '📤 Import CSV'}
+          <input type="file" accept=".csv" onChange={handleFile} disabled={importing} style={{ display: 'none' }} />
+        </label>
+        {importResult && (
+          <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: importResult.ok ? C.greenBright : C.danger }}>
+            {importResult.ok
+              ? `✓ ${importResult.imported} rows imported${importResult.skipped ? `, ${importResult.skipped} skipped` : ''}`
+              : importResult.error}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -793,7 +837,7 @@ function CMS({ pin }) {
 
         {/* Export row */}
         <div style={{ marginBottom: 20, padding: '10px 14px', background: `${C.surface}88`, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-          <ExportRow pin={pin} />
+          <DataTransferBar pin={pin} />
         </div>
 
         <Tabs active={tab} setActive={setTab} />

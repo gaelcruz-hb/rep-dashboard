@@ -1487,6 +1487,55 @@ function detectDailyRaid(reps) {
 
 app.post('/api/contest/verify-pin', requirePin, (_req, res) => res.json({ ok: true }));
 
+// Import contest data from CSV
+app.post('/api/contest/import', requirePin, async (req, res) => {
+  const { csv } = req.body ?? {};
+  if (!csv || typeof csv !== 'string') return res.status(400).json({ error: 'csv string required' });
+  const lines = csv.trim().split('\n').filter(l => l.trim());
+  if (lines.length < 2) return res.status(400).json({ error: 'CSV has no data rows' });
+
+  const data = await readContest();
+  let imported = 0, skipped = 0;
+  const errors = [];
+
+  for (const line of lines.slice(1)) {
+    const cols = line.split(',');
+    if (cols.length < 18) { skipped++; continue; }
+    const [name, , date, attended, onTime, prodPct, instaPct, convos, mrr, fortressPct,
+           anyToEss, essToPlus, essToAio, plusToAio, basicToPlus, basicToAio,
+           hourlyPay, payrollPass] = cols;
+    if (!data.reps[name?.trim()]) { errors.push(`Rep not found: ${name}`); skipped++; continue; }
+    if (!DATE_RE.test(date?.trim())) { errors.push(`Invalid date: ${date}`); skipped++; continue; }
+    const repName = name.trim();
+    data.reps[repName].days = data.reps[repName].days ?? {};
+    data.reps[repName].days[date.trim()] = {
+      attended: attended?.trim() === 'Yes',
+      onTime:   onTime?.trim()   === 'Yes',
+      productivityPct:  Number(prodPct)  || 0,
+      instascorePct:    Number(instaPct) || 0,
+      instascoreConvos: Number(convos)   || 0,
+      mrrDollars:       Number(mrr)      || 0,
+      fortressPct: fortressPct?.trim() === '' ? null : (Number(fortressPct) || null),
+      upgrades: {
+        anyToEssentials:  Number(anyToEss)    || 0,
+        essentialsToPlus: Number(essToPlus)   || 0,
+        essentialsToAio:  Number(essToAio)    || 0,
+        plusToAio:        Number(plusToAio)   || 0,
+        basicToPlus:      Number(basicToPlus) || 0,
+        basicToAio:       Number(basicToAio)  || 0,
+      },
+      addons: {
+        hourlyPay:   Number(hourlyPay)   || 0,
+        payrollPass: Number(payrollPass) || 0,
+      },
+    };
+    imported++;
+  }
+
+  if (imported > 0) await writeContest(data);
+  res.json({ ok: true, imported, skipped, errors });
+});
+
 // Export contest data as CSV for a date range
 app.get('/api/contest/export', requirePin, async (req, res) => {
   const { start, end } = req.query;

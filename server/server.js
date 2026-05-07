@@ -13,7 +13,7 @@ import { query, getDiagnostics, resetConnection, getDbToken } from "./databricks
 const app = express();
 const PORT = process.env.DATABRICKS_APP_PORT || process.env.PORT || 3001;
 const isDev = !process.env.DATABRICKS_APP_PORT;
-
+console.log("Test push")
 if (isDev) {
   app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174"] }));
 }

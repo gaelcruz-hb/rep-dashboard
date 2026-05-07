@@ -48,6 +48,25 @@ function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = fals
   );
 }
 
+// ── Seconds → "Xm Ys" ────────────────────────────────────────────────────────
+function fmtSecs(s) {
+  if (s == null || isNaN(s)) return '—';
+  const m = Math.floor(s / 60), r = Math.round(s % 60);
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+}
+
+// ── Talkdesk stat card ────────────────────────────────────────────────────────
+function TdStatCard({ label, value, sub, loading }) {
+  return (
+    <div className="bg-surface border border-border rounded-[10px] p-4 pt-5 relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
+      <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">{label}</div>
+      <div className="text-2xl font-bold font-mono leading-none mb-1">{loading ? '…' : value}</div>
+      {sub && <div className="text-[10px] text-muted mt-1">{sub}</div>}
+    </div>
+  );
+}
+
 // ── MRR Added card (no goal — shows delta vs prior period) ───────────────────
 function MrrCard({ total, prior, priorLabel, upgradeCount, loading }) {
   const delta = prior != null ? total - prior : null;
@@ -147,7 +166,7 @@ function ConfirmModal({ caseNum, isArchived, onConfirm, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function RepDetail() {
-  const { selectedRep, setSelectedRep, repFilter, goals, periodFilter, customRangeMode, customStartDate, customEndDate } = useDashboard();
+  const { selectedRep, setSelectedRep, repFilter, goals, periodFilter, customRangeMode, customStartDate, customEndDate, repList: sfRepList } = useDashboard();
   const [caseFilter, setCaseFilter]   = useState('all');
   const [sortCol, setSortCol]         = useState('ageDays');
   const [sortDir, setSortDir]         = useState('desc');
@@ -168,6 +187,8 @@ export function RepDetail() {
   const [rubricSortDir, setRubricSortDir]       = useState('asc');
   const [rubricExpanded, setRubricExpanded]     = useState(false);
   const [convoExpanded, setConvoExpanded]       = useState(false);
+  const [mrrExpanded, setMrrExpanded]           = useState(false);
+  const [tdCallsExpanded, setTdCallsExpanded]   = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
 
@@ -185,31 +206,43 @@ export function RepDetail() {
   const { reps: repList = [] } = parseManagerData(mgrRaw) ?? {};
 
   const activeRep = repFilter !== 'all' ? repFilter : selectedRep;
-  const rep = repList.find(r => r.name === activeRep) ?? repList[0];
 
+  // Look up rep — exact match first, then case-insensitive fallback
+  const activeRepLower = activeRep?.toLowerCase() ?? '';
+  const rep = repList.find(r => r.name === activeRep)
+    ?? repList.find(r => r.name.toLowerCase() === activeRepLower)
+    ?? repList[0];
+
+  // The SF rep entry (has the canonical ID even when parseManagerData hasn't loaded yet)
+  const sfRep = sfRepList.find(r => r.name === activeRep)
+    ?? sfRepList.find(r => r.name.toLowerCase() === activeRepLower);
+  const repNotInSF = activeRep && sfRepList.length > 0 && !sfRep;
+
+
+  const repId = repNotInSF ? null : (sfRep?.id ?? rep?.id);
   const { data: detail, loading: detailLoading, error: detailError } = useRepDetail(
-    rep?.id, periodFilter,
+    repId, periodFilter,
     customRangeMode ? customStartDate : undefined,
     customRangeMode ? customEndDate   : undefined,
   );
 
   useEffect(() => {
-    if (!rep?.id) return;
+    if (!repId) return;
     setArchivedIds(new Set());
     setManuallyRestoredIds(new Set());
     setDropdownId(null);
     setModalCase(null);
-    apiFetch(`/api/archived-cases/${rep.id}`)
+    apiFetch(`/api/archived-cases/${repId}`)
       .then(r => r.json())
       .then(data => setArchivedIds(new Set(data.ids ?? [])))
       .catch(() => {});
-  }, [rep?.id]);
+  }, [repId]);
 
   useEffect(() => {
-    if (!rep?.id) return;
+    if (!repId) return;
     setInstaData(null);
     setInstaLoading(true);
-    const params = new URLSearchParams({ ownerId: rep.id, period: periodFilter });
+    const params = new URLSearchParams({ ownerId: repId, period: periodFilter });
     if (customRangeMode && customStartDate && customEndDate) {
       params.set('startDate', customStartDate);
       params.set('endDate', customEndDate);
@@ -255,7 +288,7 @@ export function RepDetail() {
     }
   }
 
-  if (mgrLoading) {
+  if (mgrLoading && sfRepList.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-muted text-xs font-mono animate-pulse">
         Loading rep list…
@@ -263,7 +296,16 @@ export function RepDetail() {
     );
   }
 
-  if (!rep) {
+  if (repNotInSF) {
+    return (
+      <div className="p-4">
+        <div className="text-warn text-sm font-medium mb-1">"{activeRep}" not found in Salesforce</div>
+        <div className="text-muted text-xs">This name doesn't match any active Salesforce user. Check the spelling in <code className="font-mono">orgData.js</code> or confirm the account is active.</div>
+      </div>
+    );
+  }
+
+  if (!rep && !sfRep) {
     return <div className="text-muted text-xs p-4">No rep data available.</div>;
   }
 
@@ -276,6 +318,8 @@ export function RepDetail() {
   const mrrTotal          = detail?.mrrTotal           ?? 0;
   const mrrPriorTotal     = detail?.mrrPriorTotal      ?? null;
   const mrrUpgrades       = detail?.mrrUpgrades        ?? [];
+  const tdStats           = detail?.tdStats            ?? null;
+  const tdCalls           = detail?.tdCalls            ?? [];
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -334,8 +378,8 @@ export function RepDetail() {
   const archivedCases = parsedCases.filter(c => effectiveArchivedIds.has(c.sfId));
 
   // Adjust open/hold counts to exclude archived cases
-  const adjOpenCases = Math.max(0, rep.openCases - archivedCases.length);
-  const adjHoldCases = Math.max(0, rep.holdCases - archivedCases.filter(c => c.status === 'On Hold').length);
+  const adjOpenCases = Math.max(0, (rep?.openCases ?? 0) - archivedCases.length);
+  const adjHoldCases = Math.max(0, (rep?.holdCases ?? 0) - archivedCases.filter(c => c.status === 'On Hold').length);
 
   const PERIOD_LABEL = {
     yesterday: 'Yesterday',
@@ -473,18 +517,23 @@ export function RepDetail() {
       <div className="flex items-center gap-2 mb-4">
         <div className="text-[10px] text-muted font-mono uppercase tracking-[1px]">Select Rep</div>
         <select
-          value={activeRep ?? rep.name}
+          value={activeRep ?? rep?.name ?? ''}
           onChange={e => setSelectedRep(e.target.value)}
           className="bg-surface2 border border-border text-text px-2.5 py-1.5 rounded-md text-xs outline-none focus:border-accent transition-colors cursor-pointer"
         >
-          {repList.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+          {sfRepList.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
         </select>
+        {repNotInSF && (
+          <span className="text-[10px] text-warn font-mono">
+            "{activeRep}" not found in Salesforce — check name spelling
+          </span>
+        )}
       </div>
 
       {/* Rep name + team/manager header */}
       <div className="mb-4">
         <div className="flex items-center gap-2">
-          <div className="text-[18px] font-bold text-text">{rep.name}</div>
+          <div className="text-[18px] font-bold text-text">{sfRep?.name ?? rep?.name ?? activeRep}</div>
           {(detailLoading || instaLoading) && (
             <svg className="animate-spin w-4 h-4 text-accent shrink-0" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
@@ -492,7 +541,7 @@ export function RepDetail() {
             </svg>
           )}
         </div>
-        <div className="text-xs text-muted">{rep.team} · Manager: {findManagerForRep(rep.name)}</div>
+        <div className="text-xs text-muted">{rep?.team ?? '—'} · Manager: {findManagerForRep(sfRep?.name ?? rep?.name ?? activeRep)}</div>
       </div>
 
       {/* KPI cards */}
@@ -505,6 +554,9 @@ export function RepDetail() {
           upgradeCount={mrrUpgrades.length}
           loading={detailLoading}
         />
+        <TdStatCard label="Avg Talk Time" value={fmtSecs(tdStats?.avgTalkSecs)} sub={`${tdStats?.callCount ?? 0} calls`} loading={detailLoading} />
+        <TdStatCard label="Avg Hold Time" value={fmtSecs(tdStats?.avgHoldSecs)} loading={detailLoading} />
+        <TdStatCard label="Avg CSAT"      value={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'} loading={detailLoading} />
       </div>
 
       {/* Instascore rubric heatmap */}
@@ -895,59 +947,127 @@ export function RepDetail() {
 
       {/* MRR Upgrades table */}
       <Card className="mb-4">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <button
+          onClick={() => setMrrExpanded(e => !e)}
+          className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+        >
           <span className="text-xs font-semibold text-text">MRR Upgrades</span>
-          <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : mrrUpgrades.length} upgrade{mrrUpgrades.length !== 1 ? 's' : ''} · ${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} total</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                {['Date', 'Company', 'Location', 'Most Recent Upgrade', 'From → To', 'MRR $', ''].map(h => (
-                  <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {detailLoading ? (
-                <tr><td colSpan={7} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading upgrades…</td></tr>
-              ) : mrrUpgrades.length === 0 ? (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted text-xs font-mono">No upgrades in this period</td></tr>
-              ) : mrrUpgrades.map((u, i) => (
-                <tr key={i} className="hover:bg-surface2 transition-colors">
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
-                    {u.markedMonth ? String(u.markedMonth).slice(0, 10) : '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">{u.companyId ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">{u.locationName ?? u.locationId ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
-                    {u.mostRecentUpgrade ? String(u.mostRecentUpgrade).slice(0, 10) : '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
-                    <span className="text-muted">{u.startTier ?? '—'}</span>
-                    <span className="mx-1.5 text-border">→</span>
-                    <span className="text-accent font-medium">{u.endTier ?? '—'}</span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-success whitespace-nowrap">
-                    {u.netPriceChange ? `+$${Number(u.netPriceChange).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
-                    {u.upgradeId ? (
-                      <a
-                        href={`https://app.joinhomebase.com/admin/upsells/${u.upgradeId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-accent hover:underline font-mono text-[11px]"
-                      >
-                        View
-                      </a>
-                    ) : '—'}
-                  </td>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : mrrUpgrades.length} upgrade{mrrUpgrades.length !== 1 ? 's' : ''} · ${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} total</span>
+            <span className="text-muted text-xs">{mrrExpanded ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {mrrExpanded && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Date', 'Company', 'Location', 'Most Recent Upgrade', 'From → To', 'MRR $', ''].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {detailLoading ? (
+                  <tr><td colSpan={7} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading upgrades…</td></tr>
+                ) : mrrUpgrades.length === 0 ? (
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-muted text-xs font-mono">No upgrades in this period</td></tr>
+                ) : mrrUpgrades.map((u, i) => (
+                  <tr key={i} className="hover:bg-surface2 transition-colors">
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {u.markedMonth ? String(u.markedMonth).slice(0, 10) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">{u.companyId ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">{u.locationName ?? u.locationId ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {u.mostRecentUpgrade ? String(u.mostRecentUpgrade).slice(0, 10) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      <span className="text-muted">{u.startTier ?? '—'}</span>
+                      <span className="mx-1.5 text-border">→</span>
+                      <span className="text-accent font-medium">{u.endTier ?? '—'}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-success whitespace-nowrap">
+                      {u.netPriceChange ? `+$${Number(u.netPriceChange).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      {u.upgradeId ? (
+                        <a
+                          href={`https://app.joinhomebase.com/admin/upsells/${u.upgradeId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent hover:underline font-mono text-[11px]"
+                        >
+                          View
+                        </a>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Talkdesk Calls table */}
+      <Card className="mb-4">
+        <button
+          onClick={() => setTdCallsExpanded(e => !e)}
+          className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+        >
+          <span className="text-xs font-semibold text-text">Talkdesk Calls</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : tdCalls.length} call{tdCalls.length !== 1 ? 's' : ''}</span>
+            <span className="text-muted text-xs">{tdCallsExpanded ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {tdCallsExpanded && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Date', 'Type', 'Talk Time', 'Hold Time', 'CSAT', 'Recording'].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {detailLoading ? (
+                  <tr><td colSpan={6} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading calls…</td></tr>
+                ) : tdCalls.length === 0 ? (
+                  <tr><td colSpan={6} className="px-3 py-6 text-center text-muted text-xs font-mono">No calls in this period</td></tr>
+                ) : tdCalls.map((c, i) => {
+                  const csatColor = c.csatScore == null ? 'text-muted'
+                    : c.csatScore >= 4 ? 'text-success'
+                    : c.csatScore >= 3 ? 'text-warn'
+                    : 'text-danger';
+                  return (
+                    <tr key={i} className="hover:bg-surface2 transition-colors">
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                        {c.startTime ? String(c.startTime).slice(0, 16).replace('T', ' ') : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap capitalize">
+                        {c.callType ?? '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">{fmtSecs(c.talkSecs)}</td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">{fmtSecs(c.holdSecs)}</td>
+                      <td className={`px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap ${csatColor}`}>
+                        {c.csatScore != null ? c.csatScore.toFixed(1) : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                        {c.recordingLink && c.recordingLink !== 'None'
+                          ? <a href={c.recordingLink} target="_blank" rel="noreferrer" className="text-accent hover:underline font-mono text-[10px]">▶ Play</a>
+                          : <span className="text-muted font-mono text-[10px]">—</span>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* Cases card */}

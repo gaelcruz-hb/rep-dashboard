@@ -34,7 +34,9 @@ const LAI_ASR    = 'prod_raw.level_ai.homebase_level_asr_asrlog';
 const LAI_USER   = 'prod_raw.level_ai.homebase_accounts_user';
 const LAI_QA     = 'prod_raw.level_ai.homebase_qa_metrics';
 const UPGRADES   = 'prod_redshift_replica.bizops.cs_marked_upgrades_with_trials';
-const LOCATIONS  = 'stage_raw.appdb.locations';
+const LOCATIONS  = 'prod_redshift_replica.bizops_staging.locations';
+const COMPANIES  = 'prod_redshift_replica.bizops_staging.companies';
+const TDCALLS    = 'stage_raw.talkdesk.calls';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -131,6 +133,23 @@ function mrrDateFilter(period, startDate, endDate) {
       return `DATE(upg.marked_month) >= DATE_TRUNC('YEAR', CURRENT_DATE())`;
     default: // 'month' and anything else → current month via marked_month
       return `DATE(upg.marked_month) >= DATE_TRUNC('MONTH', CURRENT_DATE())`;
+  }
+}
+
+function callsDateFilter(period, startDate, endDate) {
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `DATE(t.start_time) BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':     return `DATE(t.start_time) = CURRENT_DATE()`;
+    case 'yesterday': return `DATE(t.start_time) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'last_week':
+      return `DATE(t.start_time) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(t.start_time) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(t.start_time) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(t.start_time) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `DATE(t.start_time) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(t.start_time) < CURRENT_DATE()`;
+    default:
+      return `DATE(t.start_time) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
   }
 }
 
@@ -253,6 +272,8 @@ app.get("/api/rep-detail", async (req, res) => {
         : priorClause.replace(/DATE\(closeddate\)/g, 'DATE(upg.marked_month)'))
     : null;
 
+  const callsFilter = callsDateFilter(period, startDate, endDate);
+
   try {
     const queries = [
       // 1. All currently-open cases for this rep (not period-filtered)
@@ -283,12 +304,30 @@ app.get("/api/rep-detail", async (req, res) => {
              WHERE is_current = true
              AND DATE(createddate) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}
              AND case_response_time_hours__c IS NOT NULL ${owId}`),
-      // 6. MRR upgrades for current period
+      // 6. Talkdesk call stats for current period
+      query(`SELECT COUNT(*) AS call_count,
+                    AVG(CAST(t.talk_time AS DOUBLE)) AS avg_talk,
+                    AVG(CAST(t.holding_time AS DOUBLE)) AS avg_hold,
+                    AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat
+             FROM ${TD} t
+             JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+             WHERE cu.id = '${ownerId}'
+               AND ${callsFilter}`),
+      // 7. Talkdesk individual calls for current period
+      query(`SELECT t.start_time, t.call_type, t.talk_time, t.holding_time, t.csat_score, t.recording_link
+             FROM ${TD} t
+             JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+             WHERE cu.id = '${ownerId}'
+               AND ${callsFilter}
+             ORDER BY t.start_time DESC`),
+      // 8. MRR upgrades for current period
       query(`SELECT upg.marked_upgrade_id, upg.marked_month, upg.upgrade_at, upg.most_recent_upgrade, upg.company_id, upg.location_id,
-                    upg.start_tier, upg.end_tier, upg.net_price_change, loc.name AS location_name
+                    upg.start_tier, upg.end_tier, upg.net_price_change,
+                    COALESCE(loc.name, comp.name) AS location_name
              FROM ${UPGRADES} upg
              JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
-             LEFT JOIN ${LOCATIONS} loc ON loc.id = upg.location_id
+             LEFT JOIN ${LOCATIONS} loc ON CAST(loc.location_id AS STRING) = CAST(upg.location_id AS STRING)
+             LEFT JOIN ${COMPANIES} comp ON CAST(comp.company_id AS STRING) = CAST(upg.company_id AS STRING)
              WHERE cu.id = '${ownerId}'
                AND ${mrrFilter}
              ORDER BY upg.marked_month DESC, upg.upgrade_at DESC`),
@@ -314,7 +353,8 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
-    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, mrrRows, priorRow, mrrPriorRow] = await Promise.all(queries);
+    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow] = await Promise.all(queries);
+
 
     const mrrUpgrades = (mrrRows ?? []).map(r => ({
       upgradeId:         r.marked_upgrade_id,
@@ -342,6 +382,20 @@ app.get("/api/rep-detail", async (req, res) => {
       mrrTotal,
       mrrPriorTotal,
       mrrUpgrades,
+      tdStats: {
+        callCount:   Number(tdStatsRow[0]?.call_count ?? 0),
+        avgTalkSecs: tdStatsRow[0]?.avg_talk != null ? Number(tdStatsRow[0].avg_talk) : null,
+        avgHoldSecs: tdStatsRow[0]?.avg_hold != null ? Number(tdStatsRow[0].avg_hold) : null,
+        avgCsat:     tdStatsRow[0]?.avg_csat != null ? Number(tdStatsRow[0].avg_csat) : null,
+      },
+      tdCalls: (tdCallRows ?? []).map(r => ({
+        startTime:     r.start_time,
+        callType:      r.call_type ?? null,
+        talkSecs:      r.talk_time    != null ? Number(r.talk_time)    : null,
+        holdSecs:      r.holding_time != null ? Number(r.holding_time) : null,
+        csatScore:     r.csat_score   != null ? Number(r.csat_score)   : null,
+        recordingLink: r.recording_link ?? null,
+      })),
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);

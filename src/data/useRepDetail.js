@@ -4,7 +4,7 @@ import { apiFetch } from './apiFetch.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-export function useRepDetail(ownerId, period = 'week', startDate, endDate) {
+export function useRepDetail(ownerId, period = 'week', startDate, endDate, channelType = 'calls') {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
@@ -13,13 +13,13 @@ export function useRepDetail(ownerId, period = 'week', startDate, endDate) {
     if (!ownerId) return;
     if (startDate !== undefined && endDate !== undefined && (!startDate || !endDate)) return;
 
-    const cacheKey = `rep-detail:${ownerId ?? ''}|${period ?? ''}|${startDate ?? ''}|${endDate ?? ''}`;
+    const cacheKey = `rep-detail:${ownerId ?? ''}|${period ?? ''}|${startDate ?? ''}|${endDate ?? ''}|${channelType}`;
     const cached = cacheGet(cacheKey);
     if (cached) { setData(cached); setLoading(false); }
     else { setLoading(true); setData(null); }
 
     const controller = new AbortController();
-    const params = new URLSearchParams({ ownerId });
+    const params = new URLSearchParams({ ownerId, channelType });
     if (startDate && endDate) {
       params.set('startDate', startDate);
       params.set('endDate', endDate);
@@ -38,7 +38,7 @@ export function useRepDetail(ownerId, period = 'week', startDate, endDate) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
 
     return () => controller.abort();
-  }, [ownerId, period, startDate, endDate]);
+  }, [ownerId, period, startDate, endDate, channelType]);
 
   return { data, loading, error };
 }

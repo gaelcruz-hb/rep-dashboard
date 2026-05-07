@@ -37,6 +37,7 @@ const UPGRADES   = 'prod_redshift_replica.bizops.cs_marked_upgrades_with_trials'
 const LOCATIONS  = 'prod_redshift_replica.bizops_staging.locations';
 const COMPANIES  = 'prod_redshift_replica.bizops_staging.companies';
 const TDCALLS        = 'stage_raw.talkdesk.calls';
+const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -153,6 +154,42 @@ function callsDateFilter(period, startDate, endDate) {
   }
 }
 
+function statusDateFilter(period, startDate, endDate) {
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `DATE(dsu.status_start_at) BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':     return `DATE(dsu.status_start_at) = CURRENT_DATE()`;
+    case 'yesterday': return `DATE(dsu.status_start_at) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'last_week':
+      return `DATE(dsu.status_start_at) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(dsu.status_start_at) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(dsu.status_start_at) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(dsu.status_start_at) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `DATE(dsu.status_start_at) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(dsu.status_start_at) < CURRENT_DATE()`;
+    default:
+      return `DATE(dsu.status_start_at) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+  }
+}
+
+function computeProductivity(statusRows, channelType) {
+  const byStatus = {};
+  for (const row of statusRows ?? []) {
+    byStatus[row.status] = Number(row.total_secs ?? 0);
+  }
+  const availSecs  = byStatus['available']  || 0;
+  const onCallSecs = byStatus['on a call']  || 0;
+  const chatSecs   = byStatus['chat']       || 0;
+  let totalSecs;
+  if (channelType === 'calls') {
+    totalSecs = availSecs + onCallSecs;
+  } else if (channelType === 'chats') {
+    totalSecs = chatSecs || availSecs;
+  } else {
+    totalSecs = availSecs + onCallSecs + chatSecs;
+  }
+  return { availSecs, onCallSecs, chatSecs, totalSecs };
+}
+
 function ownerWhere({ ownerIds, ownerId } = {}) {
   const raw = ownerIds || ownerId || null;
   if (!raw) return '';
@@ -254,7 +291,7 @@ function priorClosedClause(period) {
 
 // ── GET /api/rep-detail ────────────────────────────────────────────────────────
 app.get("/api/rep-detail", async (req, res) => {
-  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  const { ownerId, period = 'week', startDate, endDate, channelType = 'calls' } = req.query;
   if (!ownerId || !SFID_RE.test(ownerId))
     return res.status(400).json({ error: 'valid ownerId required' });
 
@@ -353,7 +390,19 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
-    const [cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow] = await Promise.all(queries);
+    // Productivity: agent status time breakdown from dim_user_status
+    const statusFilter = statusDateFilter(period, startDate, endDate);
+    const prodPromise = query(
+      `SELECT dsu.status, SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS total_secs
+       FROM ${TD_STATUS} dsu
+       WHERE LOWER(dsu.user_name) = (
+         SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+       ) AND ${statusFilter}
+       GROUP BY dsu.status`
+    ).catch(() => []);
+
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow], statusRows] =
+      await Promise.all([Promise.all(queries), prodPromise]);
 
 
     const mrrUpgrades = (mrrRows ?? []).map(r => ({
@@ -396,6 +445,7 @@ app.get("/api/rep-detail", async (req, res) => {
         csatScore:     r.csat_score   != null ? Number(r.csat_score)   : null,
         recordingLink: r.recording_link ?? null,
       })),
+      productivity: computeProductivity(statusRows, channelType),
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);

@@ -6,6 +6,7 @@ import { useRepDetail } from '../data/useRepDetail';
 import { apiFetch } from '../data/apiFetch.js';
 import { Card, CardBody } from '../components/ui/Card';
 import { ORG } from '../data/orgData';
+import { getRepChannelType } from '../data/getRepChannelType';
 
 function findManagerForRep(repName) {
   for (const { manager, teams } of ORG) {
@@ -53,6 +54,15 @@ function fmtSecs(s) {
   if (s == null || isNaN(s)) return '—';
   const m = Math.floor(s / 60), r = Math.round(s % 60);
   return m > 0 ? `${m}m ${r}s` : `${r}s`;
+}
+
+// ── Seconds → "Xh Ym" (for large durations) ─────────────────────────────────
+function fmtDuration(s) {
+  if (!s || s <= 0) return '—';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // ── Talkdesk stat card ────────────────────────────────────────────────────────
@@ -189,6 +199,7 @@ export function RepDetail() {
   const [convoExpanded, setConvoExpanded]       = useState(false);
   const [mrrExpanded, setMrrExpanded]           = useState(false);
   const [tdCallsExpanded, setTdCallsExpanded]   = useState(false);
+  const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
 
@@ -220,10 +231,12 @@ export function RepDetail() {
 
 
   const repId = repNotInSF ? null : (sfRep?.id ?? rep?.id);
+  const channelType = getRepChannelType(sfRep?.name ?? rep?.name ?? activeRep ?? '');
   const { data: detail, loading: detailLoading, error: detailError } = useRepDetail(
     repId, periodFilter,
     customRangeMode ? customStartDate : undefined,
     customRangeMode ? customEndDate   : undefined,
+    channelType,
   );
 
   useEffect(() => {
@@ -320,6 +333,7 @@ export function RepDetail() {
   const mrrUpgrades       = detail?.mrrUpgrades        ?? [];
   const tdStats           = detail?.tdStats            ?? null;
   const tdCalls           = detail?.tdCalls            ?? [];
+  const productivity      = detail?.productivity       ?? null;
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -557,7 +571,63 @@ export function RepDetail() {
         <TdStatCard label="Avg Talk Time" value={fmtSecs(tdStats?.avgTalkSecs)} sub={`${tdStats?.callCount ?? 0} calls`} loading={detailLoading} />
         <TdStatCard label="Avg Hold Time" value={fmtSecs(tdStats?.avgHoldSecs)} loading={detailLoading} />
         <TdStatCard label="Avg CSAT"      value={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'} loading={detailLoading} />
+        <TdStatCard
+          label="Productive Time"
+          value={fmtDuration(productivity?.totalSecs)}
+          sub={channelType === 'calls' ? 'available + on call' : channelType === 'chats' ? 'chat time' : 'calls + chat'}
+          loading={detailLoading}
+        />
       </div>
+
+      {/* Productivity breakdown */}
+      {productivity && (
+        <Card className="mb-4">
+          <button
+            onClick={() => setProdExpanded(e => !e)}
+            className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+          >
+            <span className="text-xs font-semibold text-text">Productivity Breakdown</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-muted font-mono capitalize">{channelType} rep · {periodLabel}</span>
+              <span className="text-muted text-xs">{prodExpanded ? '▲' : '▼'}</span>
+            </div>
+          </button>
+          {prodExpanded && (
+            <div className="px-4 py-3">
+              {productivity.totalSecs === 0 ? (
+                <div className="text-[11px] text-muted italic">No productivity data for this period</div>
+              ) : (
+                <table className="w-full text-xs font-mono">
+                  <tbody>
+                    {(channelType === 'calls' || channelType === 'mixed') && (
+                      <>
+                        <tr>
+                          <td className="py-1.5 text-muted">Available</td>
+                          <td className="py-1.5 text-right text-text">{fmtDuration(productivity.availSecs)}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-1.5 text-muted">On a Call</td>
+                          <td className="py-1.5 text-right text-text">{fmtDuration(productivity.onCallSecs)}</td>
+                        </tr>
+                      </>
+                    )}
+                    {(channelType === 'chats' || channelType === 'mixed') && (
+                      <tr>
+                        <td className="py-1.5 text-muted">Chat</td>
+                        <td className="py-1.5 text-right text-text">{fmtDuration(productivity.chatSecs)}</td>
+                      </tr>
+                    )}
+                    <tr className="border-t border-border">
+                      <td className="pt-2 pb-1 font-semibold text-text">Total</td>
+                      <td className="pt-2 pb-1 text-right font-semibold text-accent">{fmtDuration(productivity.totalSecs)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Instascore rubric heatmap */}
       {instaData?.byRubric?.length > 0 && (() => {

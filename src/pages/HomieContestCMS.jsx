@@ -730,6 +730,46 @@ function BonusesTab({ pin }) {
   );
 }
 
+// ── Export CSV ────────────────────────────────────────────────────────────────
+function ExportRow({ pin }) {
+  const [start, setStart]   = useState('2026-05-04');
+  const [end, setEnd]       = useState('2026-05-29');
+  const [loading, setLoading] = useState(false);
+
+  async function download() {
+    setLoading(true);
+    try {
+      const resp = await fetch(`/api/contest/export?start=${start}&end=${end}`, {
+        headers: { 'x-contest-pin': pin },
+      });
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `homie-hustlers-${start}-to-${end}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>Export:</span>
+      <input type="date" value={start} onChange={e => setStart(e.target.value)}
+        style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
+      <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.muted }}>→</span>
+      <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+        style={{ ...inp(), padding: '5px 8px', fontSize: 11, color: C.text }} />
+      <button onClick={download} disabled={loading || !start || !end}
+        style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, background: `${C.green}25`, color: C.greenBright, border: `1px solid ${C.green}50`, borderRadius: 6, padding: '6px 14px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+        {loading ? '…' : '📥 CSV'}
+      </button>
+    </div>
+  );
+}
+
 // ── Main CMS ──────────────────────────────────────────────────────────────────
 function CMS({ pin }) {
   const [tab, setTab] = useState('daily');
@@ -738,7 +778,7 @@ function CMS({ pin }) {
     <div style={{ minHeight: '100vh', background: C.bg, color: C.text }}>
       <div style={{ maxWidth: 1060, margin: '0 auto', padding: '32px 24px' }}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'DM Mono, monospace', color: C.goldGlow }}>🏰 Homie Hustlers — CMS</div>
             <div style={{ fontSize: 10, color: C.muted, fontFamily: 'DM Mono, monospace', marginTop: 4 }}>May 4 – May 29 · Hustle & Conquer</div>
@@ -749,6 +789,11 @@ function CMS({ pin }) {
             onMouseLeave={e => e.target.style.color = C.muted}>
             ← Dashboard
           </a>
+        </div>
+
+        {/* Export row */}
+        <div style={{ marginBottom: 20, padding: '10px 14px', background: `${C.surface}88`, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+          <ExportRow pin={pin} />
         </div>
 
         <Tabs active={tab} setActive={setTab} />

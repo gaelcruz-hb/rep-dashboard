@@ -1487,6 +1487,46 @@ function detectDailyRaid(reps) {
 
 app.post('/api/contest/verify-pin', requirePin, (_req, res) => res.json({ ok: true }));
 
+// Export contest data as CSV for a date range
+app.get('/api/contest/export', requirePin, async (req, res) => {
+  const { start, end } = req.query;
+  if (!start || !end || !DATE_RE.test(start) || !DATE_RE.test(end))
+    return res.status(400).json({ error: 'start and end dates required (YYYY-MM-DD)' });
+  const data = await readContest();
+  const rows = [];
+  for (const [name, rep] of Object.entries(data.reps)) {
+    for (const [date, day] of Object.entries(rep.days ?? {})) {
+      if (date < start || date > end) continue;
+      const pts = calcDayPoints(day);
+      rows.push([
+        name, rep.house, date,
+        day.attended ? 'Yes' : 'No',
+        day.onTime   ? 'Yes' : 'No',
+        day.productivityPct  ?? 0,
+        day.instascorePct    ?? 0,
+        day.instascoreConvos ?? 0,
+        day.mrrDollars       ?? 0,
+        day.fortressPct      ?? '',
+        day.upgrades?.anyToEssentials  ?? 0,
+        day.upgrades?.essentialsToPlus ?? 0,
+        day.upgrades?.essentialsToAio  ?? 0,
+        day.upgrades?.plusToAio        ?? 0,
+        day.upgrades?.basicToPlus      ?? 0,
+        day.upgrades?.basicToAio       ?? 0,
+        day.addons?.hourlyPay   ?? 0,
+        day.addons?.payrollPass ?? 0,
+        pts.total,
+      ]);
+    }
+  }
+  rows.sort((a, b) => a[2].localeCompare(b[2]) || a[0].localeCompare(b[0]));
+  const header = 'Rep,House,Date,Attended,OnTime,Prod%,Insta%,Convos,MRR$,Fortress%,AnyToEssentials,EssToPlus,EssToAIO,PlusToAIO,BasicToPlus,BasicToAIO,HourlyPay,PayrollPass,DayKP';
+  const csv = [header, ...rows.map(r => r.join(','))].join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="homie-hustlers-${start}-to-${end}.csv"`);
+  res.send(csv);
+});
+
 app.get('/api/contest', async (_req, res) => {
   try {
     const data = await readContest();

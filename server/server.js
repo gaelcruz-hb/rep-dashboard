@@ -8,7 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
-import { query, getDiagnostics, resetConnection } from "./databricksClient.js";
+import { query, getDiagnostics, resetConnection, getDbToken } from "./databricksClient.js";
 
 const app = express();
 const PORT = process.env.DATABRICKS_APP_PORT || process.env.PORT || 3001;
@@ -37,7 +37,6 @@ const UPGRADES   = 'prod_redshift_replica.bizops.cs_marked_upgrades_with_trials'
 const LOCATIONS  = 'prod_redshift_replica.bizops_staging.locations';
 const COMPANIES  = 'prod_redshift_replica.bizops_staging.companies';
 const TDCALLS        = 'stage_raw.talkdesk.calls';
-const CONTEST_TABLE  = process.env.CONTEST_TABLE || 'prod_raw.app_state.contest_state';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -1221,7 +1220,8 @@ app.post('/api/reconnect', async (_req, res) => {
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── Homie Contest CMS ──────────────────────────────────────────────────────────
-const CONTEST_FILE = path.resolve(__dirname, 'contest.json');
+const CONTEST_FILE      = path.resolve(__dirname, 'contest.json');
+const DBFS_CONTEST_PATH = '/FileStore/rep_dashboard/contest_state.json';
 
 const HOUSE_COLORS     = { Grind: 'red', Reign: 'blue', Legacy: 'purple' };
 const VALID_HOUSES     = new Set(['Grind', 'Reign', 'Legacy']);
@@ -1237,11 +1237,18 @@ const WEEK_RANGES = {
 
 async function readContest() {
   try {
-    const rows = await query(`SELECT value FROM ${CONTEST_TABLE} WHERE key = 'state' LIMIT 1`);
-    if (rows.length > 0)
-      return JSON.parse(Buffer.from(rows[0].value, 'base64').toString('utf8'));
+    const token = await getDbToken();
+    const host  = process.env.DATABRICKS_HOST;
+    const resp  = await fetch(
+      `https://${host}/api/2.0/dbfs/read?path=${encodeURIComponent(DBFS_CONTEST_PATH)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (resp.ok) {
+      const { data } = await resp.json();
+      return JSON.parse(Buffer.from(data, 'base64').toString('utf8'));
+    }
   } catch (e) {
-    console.warn('[contest] table read failed, falling back to local file:', e.message);
+    console.warn('[contest] DBFS read failed, falling back to local file:', e.message);
   }
   try {
     return JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
@@ -1249,34 +1256,36 @@ async function readContest() {
 }
 
 async function writeContest(data) {
-  const encoded = Buffer.from(JSON.stringify(data)).toString('base64');
-  await query(`
-    MERGE INTO ${CONTEST_TABLE} AS t
-    USING (SELECT 'state' AS key, '${encoded}' AS value, CURRENT_TIMESTAMP() AS updated_at) AS s
-    ON t.key = s.key
-    WHEN MATCHED THEN UPDATE SET t.value = s.value, t.updated_at = s.updated_at
-    WHEN NOT MATCHED THEN INSERT (key, value, updated_at) VALUES (s.key, s.value, s.updated_at)
-  `);
+  const token   = await getDbToken();
+  const host    = process.env.DATABRICKS_HOST;
+  const encoded = Buffer.from(JSON.stringify(data, null, 2)).toString('base64');
+  const resp = await fetch(`https://${host}/api/2.0/dbfs/put`, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ path: DBFS_CONTEST_PATH, contents: encoded, overwrite: true }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`[contest] DBFS write failed: ${resp.status} ${text}`);
+  }
 }
 
-async function initContestTable() {
+async function initContestFile() {
   try {
-    await query(`
-      CREATE TABLE IF NOT EXISTS ${CONTEST_TABLE} (
-        key        STRING    NOT NULL,
-        value      STRING    NOT NULL,
-        updated_at TIMESTAMP NOT NULL
-      ) USING DELTA
-    `);
-    const rows = await query(`SELECT key FROM ${CONTEST_TABLE} WHERE key = 'state' LIMIT 1`);
-    if (rows.length === 0) {
-      console.log('[contest] seeding table from local contest.json');
+    const token = await getDbToken();
+    const host  = process.env.DATABRICKS_HOST;
+    const check = await fetch(
+      `https://${host}/api/2.0/dbfs/read?path=${encodeURIComponent(DBFS_CONTEST_PATH)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!check.ok) {
+      console.log('[contest] DBFS file not found — seeding from local contest.json');
       const seed = JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
       await writeContest(seed);
     }
-    console.log('[contest] table ready:', CONTEST_TABLE);
+    console.log('[contest] DBFS file ready:', DBFS_CONTEST_PATH);
   } catch (e) {
-    console.warn('[contest] table init failed — falling back to local file:', e.message);
+    console.warn('[contest] DBFS init failed — falling back to local file:', e.message);
   }
 }
 
@@ -1632,7 +1641,7 @@ if (!isDev) {
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────────
-initContestTable();
+initContestFile();
 app.listen(PORT, () => {
   console.log(`🚀 Rep Dashboard server running on http://localhost:${PORT}`);
 });

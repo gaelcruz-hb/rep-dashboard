@@ -172,3 +172,9 @@ export async function resetConnection() {
   _authMethod       = null;
   await getConnection();
 }
+
+export async function getDbToken() {
+  const host = process.env.DATABRICKS_HOST;
+  if (!host) throw new Error('[Databricks] Missing DATABRICKS_HOST');
+  return getToken(host);
+}

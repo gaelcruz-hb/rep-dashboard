@@ -363,8 +363,7 @@ function DailyEntryTab({ pin }) {
   }
 
   async function saveAll(house) {
-    const reps = REP_HOUSES[house];
-    await Promise.all(reps.map(name => saveRep(name)));
+    for (const name of REP_HOUSES[house]) await saveRep(name);
   }
 
   return (

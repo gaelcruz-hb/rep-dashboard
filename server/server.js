@@ -1218,7 +1218,6 @@ app.post('/api/reconnect', async (_req, res) => {
 
 // ── GET /health ────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
-console.log('[test] deploy check');
 
 // ── Homie Contest CMS ──────────────────────────────────────────────────────────
 const CONTEST_FILE      = path.resolve(__dirname, 'contest.json');
@@ -1288,6 +1287,14 @@ async function initContestFile() {
   } catch (e) {
     console.warn('[contest] DBFS init failed — falling back to local file:', e.message);
   }
+}
+
+// Mutex: serializes all contest read-modify-write operations
+let _contestLock = Promise.resolve();
+function withLock(fn) {
+  const p = _contestLock.then(fn);
+  _contestLock = p.then(() => {}, () => {});
+  return p;
 }
 
 function requirePin(req, res, next) {
@@ -1602,13 +1609,17 @@ app.get('/api/contest', async (_req, res) => {
 app.put('/api/contest/reps/:name/days/:date', requirePin, async (req, res) => {
   const { name, date } = req.params;
   if (!DATE_RE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-  const data = await readContest();
-  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
-  data.reps[name].days = data.reps[name].days ?? {};
-  data.reps[name].days[date] = req.body ?? {};
-  await writeContest(data);
-  const pts = calcDayPoints(req.body ?? {});
-  res.json({ ok: true, points: pts });
+  try {
+    const pts = await withLock(async () => {
+      const data = await readContest();
+      if (!data.reps[name]) { const e = new Error('rep not found'); e.status = 404; throw e; }
+      data.reps[name].days = data.reps[name].days ?? {};
+      data.reps[name].days[date] = req.body ?? {};
+      await writeContest(data);
+      return calcDayPoints(req.body ?? {});
+    });
+    res.json({ ok: true, points: pts });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // Get a rep's daily entry (for pre-filling the CMS form)
@@ -1631,44 +1642,53 @@ app.get('/api/contest/weekly/:week', async (req, res) => {
 app.post('/api/contest/weekly/:week/award', requirePin, async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
-  const data  = await readContest();
-  const stats = getWeeklyStats(data, week);
-  if (data.weeklyBattles[week]?.awarded) return res.status(400).json({ error: 'week already awarded' });
-
-  const battleNames = { goldRush: 'Gold Rush', hustleSprint: 'Hustle Sprint', sharpshooter: 'Sharpshooter', attendance: 'Attendance' };
-  const awarded = [];
-  for (const [battle, label] of Object.entries(battleNames)) {
-    const winnerHouse = stats.winners[battle];
-    if (!winnerHouse) continue;
-    for (const [repName, r] of Object.entries(data.reps)) {
-      if (r.house !== winnerHouse) continue;
-      const bonus = { id: String(Date.now() + Math.random()), type: 'weekly_battle', amount: 5,
-                      note: `Week ${week} ${label} — House ${winnerHouse} wins`, date: new Date().toISOString().slice(0, 10) };
-      r.bonuses = r.bonuses ?? [];
-      r.bonuses.push(bonus);
-      awarded.push({ rep: repName, battle, bonus });
-    }
-  }
-  data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), ...stats.winners, awarded: true };
-  await writeContest(data);
-  res.json({ ok: true, awarded });
+  try {
+    const awarded = await withLock(async () => {
+      const data  = await readContest();
+      const stats = getWeeklyStats(data, week);
+      if (data.weeklyBattles[week]?.awarded) { const e = new Error('week already awarded'); e.status = 400; throw e; }
+      const battleNames = { goldRush: 'Gold Rush', hustleSprint: 'Hustle Sprint', sharpshooter: 'Sharpshooter', attendance: 'Attendance' };
+      const awarded = [];
+      for (const [battle, label] of Object.entries(battleNames)) {
+        const winnerHouse = stats.winners[battle];
+        if (!winnerHouse) continue;
+        for (const [repName, r] of Object.entries(data.reps)) {
+          if (r.house !== winnerHouse) continue;
+          const bonus = { id: String(Date.now() + Math.random()), type: 'weekly_battle', amount: 5,
+                          note: `Week ${week} ${label} — House ${winnerHouse} wins`, date: new Date().toISOString().slice(0, 10) };
+          r.bonuses = r.bonuses ?? [];
+          r.bonuses.push(bonus);
+          awarded.push({ rep: repName, battle, bonus });
+        }
+      }
+      data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), ...stats.winners, awarded: true };
+      await writeContest(data);
+      return awarded;
+    });
+    res.json({ ok: true, awarded });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // Revoke weekly battle award: removes all weekly_battle bonuses for this week from all reps
 app.delete('/api/contest/weekly/:week/award', requirePin, async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
-  const data = await readContest();
-  const prefix = `Week ${week} `;
-  let removed = 0;
-  for (const r of Object.values(data.reps)) {
-    const before = (r.bonuses ?? []).length;
-    r.bonuses = (r.bonuses ?? []).filter(b => !(b.type === 'weekly_battle' && (b.note ?? '').startsWith(prefix)));
-    removed += before - r.bonuses.length;
-  }
-  data.weeklyBattles[week] = { goldRush: null, hustleSprint: null, sharpshooter: null, attendance: null, fortress: data.weeklyBattles[week]?.fortress ?? null, awarded: false };
-  await writeContest(data);
-  res.json({ ok: true, removed });
+  try {
+    const removed = await withLock(async () => {
+      const data = await readContest();
+      const prefix = `Week ${week} `;
+      let removed = 0;
+      for (const r of Object.values(data.reps)) {
+        const before = (r.bonuses ?? []).length;
+        r.bonuses = (r.bonuses ?? []).filter(b => !(b.type === 'weekly_battle' && (b.note ?? '').startsWith(prefix)));
+        removed += before - r.bonuses.length;
+      }
+      data.weeklyBattles[week] = { goldRush: null, hustleSprint: null, sharpshooter: null, attendance: null, fortress: data.weeklyBattles[week]?.fortress ?? null, awarded: false };
+      await writeContest(data);
+      return removed;
+    });
+    res.json({ ok: true, removed });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Record fortress winner (prize tracking only — no KP)
@@ -1677,10 +1697,14 @@ app.put('/api/contest/weekly/:week/fortress', requirePin, async (req, res) => {
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
   const { winner } = req.body ?? {};
   if (winner && !VALID_HOUSES.has(winner)) return res.status(400).json({ error: 'invalid house' });
-  const data = await readContest();
-  data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), fortress: winner ?? null };
-  await writeContest(data);
-  res.json({ ok: true });
+  try {
+    await withLock(async () => {
+      const data = await readContest();
+      data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), fortress: winner ?? null };
+      await writeContest(data);
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Add a bonus to a rep
@@ -1689,24 +1713,33 @@ app.post('/api/contest/reps/:name/bonuses', requirePin, async (req, res) => {
   const { type, amount, note, date } = req.body ?? {};
   if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
   if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
-  const data = await readContest();
-  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
-  const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
-  data.reps[name].bonuses.push(bonus);
-  await writeContest(data);
-  res.json({ ok: true, bonus });
+  try {
+    const bonus = await withLock(async () => {
+      const data = await readContest();
+      if (!data.reps[name]) { const e = new Error('rep not found'); e.status = 404; throw e; }
+      const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
+      data.reps[name].bonuses.push(bonus);
+      await writeContest(data);
+      return bonus;
+    });
+    res.json({ ok: true, bonus });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // Remove a bonus from a rep
 app.delete('/api/contest/reps/:name/bonuses/:id', requirePin, async (req, res) => {
   const { name, id } = req.params;
-  const data = await readContest();
-  if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
-  const before = data.reps[name].bonuses.length;
-  data.reps[name].bonuses = data.reps[name].bonuses.filter(b => b.id !== id);
-  if (data.reps[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
-  await writeContest(data);
-  res.json({ ok: true });
+  try {
+    await withLock(async () => {
+      const data = await readContest();
+      if (!data.reps[name]) { const e = new Error('rep not found'); e.status = 404; throw e; }
+      const before = data.reps[name].bonuses.length;
+      data.reps[name].bonuses = data.reps[name].bonuses.filter(b => b.id !== id);
+      if (data.reps[name].bonuses.length === before) { const e = new Error('bonus not found'); e.status = 404; throw e; }
+      await writeContest(data);
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // Add a bonus to a house
@@ -1716,23 +1749,32 @@ app.post('/api/contest/houses/:name/bonuses', requirePin, async (req, res) => {
   const { type, amount, note, date } = req.body ?? {};
   if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
   if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
-  const data = await readContest();
-  const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
-  data.houses[name].bonuses.push(bonus);
-  await writeContest(data);
-  res.json({ ok: true, bonus });
+  try {
+    const bonus = await withLock(async () => {
+      const data = await readContest();
+      const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
+      data.houses[name].bonuses.push(bonus);
+      await writeContest(data);
+      return bonus;
+    });
+    res.json({ ok: true, bonus });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // Remove a bonus from a house
 app.delete('/api/contest/houses/:name/bonuses/:id', requirePin, async (req, res) => {
   const { name, id } = req.params;
   if (!VALID_HOUSES.has(name)) return res.status(404).json({ error: 'house not found' });
-  const data = await readContest();
-  const before = data.houses[name].bonuses.length;
-  data.houses[name].bonuses = data.houses[name].bonuses.filter(b => b.id !== id);
-  if (data.houses[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
-  await writeContest(data);
-  res.json({ ok: true });
+  try {
+    await withLock(async () => {
+      const data = await readContest();
+      const before = data.houses[name].bonuses.length;
+      data.houses[name].bonuses = data.houses[name].bonuses.filter(b => b.id !== id);
+      if (data.houses[name].bonuses.length === before) { const e = new Error('bonus not found'); e.status = 404; throw e; }
+      await writeContest(data);
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(err.status ?? 500).json({ error: err.message }); }
 });
 
 // ── Catch-all: serve index.html for client-side routing (production only) ──────

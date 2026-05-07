@@ -36,7 +36,8 @@ const LAI_QA     = 'prod_raw.level_ai.homebase_qa_metrics';
 const UPGRADES   = 'prod_redshift_replica.bizops.cs_marked_upgrades_with_trials';
 const LOCATIONS  = 'prod_redshift_replica.bizops_staging.locations';
 const COMPANIES  = 'prod_redshift_replica.bizops_staging.companies';
-const TDCALLS    = 'stage_raw.talkdesk.calls';
+const TDCALLS        = 'stage_raw.talkdesk.calls';
+const CONTEST_TABLE  = process.env.CONTEST_TABLE || 'prod_raw.app_state.contest_state';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -1234,14 +1235,49 @@ const WEEK_RANGES = {
   '4': { start: '2026-05-26', end: '2026-05-29', section: 'In Service', prize: '$25 GC per rep' },
 };
 
-function readContest() {
+async function readContest() {
+  try {
+    const rows = await query(`SELECT value FROM ${CONTEST_TABLE} WHERE key = 'state' LIMIT 1`);
+    if (rows.length > 0)
+      return JSON.parse(Buffer.from(rows[0].value, 'base64').toString('utf8'));
+  } catch (e) {
+    console.warn('[contest] table read failed, falling back to local file:', e.message);
+  }
   try {
     return JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
   } catch { return { reps: {}, houses: {}, weeklyBattles: {}, goals: {} }; }
 }
 
-function writeContest(data) {
-  fs.writeFileSync(CONTEST_FILE, JSON.stringify(data, null, 2), 'utf8');
+async function writeContest(data) {
+  const encoded = Buffer.from(JSON.stringify(data)).toString('base64');
+  await query(`
+    MERGE INTO ${CONTEST_TABLE} AS t
+    USING (SELECT 'state' AS key, '${encoded}' AS value, CURRENT_TIMESTAMP() AS updated_at) AS s
+    ON t.key = s.key
+    WHEN MATCHED THEN UPDATE SET t.value = s.value, t.updated_at = s.updated_at
+    WHEN NOT MATCHED THEN INSERT (key, value, updated_at) VALUES (s.key, s.value, s.updated_at)
+  `);
+}
+
+async function initContestTable() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS ${CONTEST_TABLE} (
+        key        STRING    NOT NULL,
+        value      STRING    NOT NULL,
+        updated_at TIMESTAMP NOT NULL
+      ) USING DELTA
+    `);
+    const rows = await query(`SELECT key FROM ${CONTEST_TABLE} WHERE key = 'state' LIMIT 1`);
+    if (rows.length === 0) {
+      console.log('[contest] seeding table from local contest.json');
+      const seed = JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
+      await writeContest(seed);
+    }
+    console.log('[contest] table ready:', CONTEST_TABLE);
+  } catch (e) {
+    console.warn('[contest] table init failed — falling back to local file:', e.message);
+  }
 }
 
 function requirePin(req, res, next) {
@@ -1441,9 +1477,9 @@ function detectDailyRaid(reps) {
 
 app.post('/api/contest/verify-pin', requirePin, (_req, res) => res.json({ ok: true }));
 
-app.get('/api/contest', (_req, res) => {
+app.get('/api/contest', async (_req, res) => {
   try {
-    const data = readContest();
+    const data = await readContest();
     const standings = computeStandings(data);
     standings.dailyRaid = detectDailyRaid(data.reps);
     res.json(standings);
@@ -1452,39 +1488,39 @@ app.get('/api/contest', (_req, res) => {
 });
 
 // Save a rep's daily raw entry
-app.put('/api/contest/reps/:name/days/:date', requirePin, (req, res) => {
+app.put('/api/contest/reps/:name/days/:date', requirePin, async (req, res) => {
   const { name, date } = req.params;
   if (!DATE_RE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-  const data = readContest();
+  const data = await readContest();
   if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
   data.reps[name].days = data.reps[name].days ?? {};
   data.reps[name].days[date] = req.body ?? {};
-  writeContest(data);
+  await writeContest(data);
   const pts = calcDayPoints(req.body ?? {});
   res.json({ ok: true, points: pts });
 });
 
 // Get a rep's daily entry (for pre-filling the CMS form)
-app.get('/api/contest/reps/:name/days/:date', requirePin, (req, res) => {
+app.get('/api/contest/reps/:name/days/:date', requirePin, async (req, res) => {
   const { name, date } = req.params;
   if (!DATE_RE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-  const data = readContest();
+  const data = await readContest();
   if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
   res.json(data.reps[name].days?.[date] ?? null);
 });
 
 // Get weekly house averages + auto-detected battle winners (public — no PIN needed)
-app.get('/api/contest/weekly/:week', (req, res) => {
+app.get('/api/contest/weekly/:week', async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
-  res.json(getWeeklyStats(readContest(), week));
+  res.json(getWeeklyStats(await readContest(), week));
 });
 
 // Award weekly battles: adds +5 pt rep bonus for each battle winner's house members
-app.post('/api/contest/weekly/:week/award', requirePin, (req, res) => {
+app.post('/api/contest/weekly/:week/award', requirePin, async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
-  const data  = readContest();
+  const data  = await readContest();
   const stats = getWeeklyStats(data, week);
   if (data.weeklyBattles[week]?.awarded) return res.status(400).json({ error: 'week already awarded' });
 
@@ -1503,15 +1539,15 @@ app.post('/api/contest/weekly/:week/award', requirePin, (req, res) => {
     }
   }
   data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), ...stats.winners, awarded: true };
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true, awarded });
 });
 
 // Revoke weekly battle award: removes all weekly_battle bonuses for this week from all reps
-app.delete('/api/contest/weekly/:week/award', requirePin, (req, res) => {
+app.delete('/api/contest/weekly/:week/award', requirePin, async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
-  const data = readContest();
+  const data = await readContest();
   const prefix = `Week ${week} `;
   let removed = 0;
   for (const r of Object.values(data.reps)) {
@@ -1520,71 +1556,71 @@ app.delete('/api/contest/weekly/:week/award', requirePin, (req, res) => {
     removed += before - r.bonuses.length;
   }
   data.weeklyBattles[week] = { goldRush: null, hustleSprint: null, sharpshooter: null, attendance: null, fortress: data.weeklyBattles[week]?.fortress ?? null, awarded: false };
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true, removed });
 });
 
 // Record fortress winner (prize tracking only — no KP)
-app.put('/api/contest/weekly/:week/fortress', requirePin, (req, res) => {
+app.put('/api/contest/weekly/:week/fortress', requirePin, async (req, res) => {
   const { week } = req.params;
   if (!WEEK_RANGES[week]) return res.status(400).json({ error: 'week must be 1–4' });
   const { winner } = req.body ?? {};
   if (winner && !VALID_HOUSES.has(winner)) return res.status(400).json({ error: 'invalid house' });
-  const data = readContest();
+  const data = await readContest();
   data.weeklyBattles[week] = { ...(data.weeklyBattles[week] ?? {}), fortress: winner ?? null };
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true });
 });
 
 // Add a bonus to a rep
-app.post('/api/contest/reps/:name/bonuses', requirePin, (req, res) => {
+app.post('/api/contest/reps/:name/bonuses', requirePin, async (req, res) => {
   const { name } = req.params;
   const { type, amount, note, date } = req.body ?? {};
   if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
   if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
-  const data = readContest();
+  const data = await readContest();
   if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
   const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
   data.reps[name].bonuses.push(bonus);
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true, bonus });
 });
 
 // Remove a bonus from a rep
-app.delete('/api/contest/reps/:name/bonuses/:id', requirePin, (req, res) => {
+app.delete('/api/contest/reps/:name/bonuses/:id', requirePin, async (req, res) => {
   const { name, id } = req.params;
-  const data = readContest();
+  const data = await readContest();
   if (!data.reps[name]) return res.status(404).json({ error: 'rep not found' });
   const before = data.reps[name].bonuses.length;
   data.reps[name].bonuses = data.reps[name].bonuses.filter(b => b.id !== id);
   if (data.reps[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true });
 });
 
 // Add a bonus to a house
-app.post('/api/contest/houses/:name/bonuses', requirePin, (req, res) => {
+app.post('/api/contest/houses/:name/bonuses', requirePin, async (req, res) => {
   const { name } = req.params;
   if (!VALID_HOUSES.has(name)) return res.status(404).json({ error: 'house not found' });
   const { type, amount, note, date } = req.body ?? {};
   if (!VALID_BONUS_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...VALID_BONUS_TYPES].join(', ')}` });
   if (typeof amount !== 'number' || !isFinite(amount)) return res.status(400).json({ error: 'amount must be a finite number' });
-  const data = readContest();
+  const data = await readContest();
   const bonus = { id: String(Date.now()), type, amount, note: note ?? '', date: date ?? new Date().toISOString().slice(0, 10) };
   data.houses[name].bonuses.push(bonus);
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true, bonus });
 });
 
 // Remove a bonus from a house
-app.delete('/api/contest/houses/:name/bonuses/:id', requirePin, (req, res) => {
+app.delete('/api/contest/houses/:name/bonuses/:id', requirePin, async (req, res) => {
   const { name, id } = req.params;
   if (!VALID_HOUSES.has(name)) return res.status(404).json({ error: 'house not found' });
-  const data = readContest();
+  const data = await readContest();
   const before = data.houses[name].bonuses.length;
   data.houses[name].bonuses = data.houses[name].bonuses.filter(b => b.id !== id);
   if (data.houses[name].bonuses.length === before) return res.status(404).json({ error: 'bonus not found' });
-  writeContest(data);
+  await writeContest(data);
   res.json({ ok: true });
 });
 
@@ -1596,6 +1632,7 @@ if (!isDev) {
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────────
+initContestTable();
 app.listen(PORT, () => {
   console.log(`🚀 Rep Dashboard server running on http://localhost:${PORT}`);
 });

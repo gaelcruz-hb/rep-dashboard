@@ -810,8 +810,40 @@ function DataTransferBar({ pin }) {
           </span>
         )}
       </div>
+
+      {/* Divider */}
+      <div style={{ width: 1, height: 24, background: C.border }} />
+
+      {/* Reset */}
+      <ResetButton pin={pin} />
     </div>
   );
+}
+
+function ResetButton({ pin }) {
+  const [resetting, setResetting] = useState(false);
+  const [done, setDone]           = useState(false);
+
+  async function reset() {
+    if (!window.confirm('⚠️ This will erase ALL contest data (days, bonuses, battles). Are you sure?')) return;
+    setResetting(true);
+    try {
+      await fetch('/api/contest/reset', { method: 'POST', headers: { 'x-contest-pin': pin } });
+      setDone(true);
+      setTimeout(() => setDone(false), 4000);
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  return done
+    ? <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: C.greenBright }}>✓ Reset</span>
+    : (
+      <button onClick={reset} disabled={resetting}
+        style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, background: `${C.danger}18`, color: C.danger, border: `1px solid ${C.danger}44`, borderRadius: 6, padding: '6px 14px', cursor: resetting ? 'not-allowed' : 'pointer', opacity: resetting ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+        {resetting ? '…' : '🗑 Reset All'}
+      </button>
+    );
 }
 
 // ── Main CMS ──────────────────────────────────────────────────────────────────

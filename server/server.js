@@ -1536,6 +1536,18 @@ app.post('/api/contest/import', requirePin, async (req, res) => {
   res.json({ ok: true, imported, skipped, errors });
 });
 
+// Reset contest data to the bundled contest.json (clean slate)
+app.post('/api/contest/reset', requirePin, async (req, res) => {
+  try {
+    const seed = JSON.parse(fs.readFileSync(CONTEST_FILE, 'utf8'));
+    await writeContest(seed);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ [contest/reset]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Export contest data as CSV for a date range
 app.get('/api/contest/export', requirePin, async (req, res) => {
   const { start, end } = req.query;

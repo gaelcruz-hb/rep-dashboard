@@ -224,6 +224,7 @@ export function Overview() {
   const mrrTotal        = rawData?.mrrTotal ?? 0;
   const mrrUpgradeCount = rawData?.mrrUpgradeCount ?? 0;
   const mrrByRep        = rawData?.mrrByRep ?? [];
+  const totalCalls      = rawData?.totalCalls ?? 0;
   const mrrWithData     = mrrByRep.filter(r => r.mrrTotal > 0);
   const mrrChartData    = mrrWithData.length ? {
     labels: mrrWithData.map(r => r.repName),
@@ -360,6 +361,14 @@ export function Overview() {
             {loading ? '…' : (avgProductiveSecs ? fmtDuration(avgProductiveSecs) : '—')}
           </div>
           <div className="text-[10px] text-muted mt-1">avg per rep / day</div>
+        </div>
+        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
+          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Total Calls</div>
+          <div className="text-2xl font-bold font-mono leading-none mb-1">
+            {loading ? '…' : totalCalls.toLocaleString()}
+          </div>
+          <div className="text-[10px] text-muted mt-1">{periodLabel}</div>
         </div>
         <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-success" />

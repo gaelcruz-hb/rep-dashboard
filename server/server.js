@@ -227,7 +227,7 @@ app.get("/api/overview-data", async (req, res) => {
 
   try {
     const cuOw = cuOwnerWhere(p);
-    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows] =
+    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows, callsRow] =
       await Promise.all([
         query(`SELECT status AS Status, COUNT(*) AS cnt
                FROM ${CASE}
@@ -295,6 +295,11 @@ app.get("/api/overview-data", async (req, res) => {
                ${cuOw}
                GROUP BY cu.name
                ORDER BY mrr_total DESC`).catch(() => []),
+        query(`SELECT COUNT(*) AS call_count
+               FROM ${TD} t
+               JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+               WHERE ${callsDateFilter(p.period, p.startDate, p.endDate)}
+               ${cuOw}`).catch(() => []),
       ]);
 
     res.json({
@@ -310,6 +315,7 @@ app.get("/api/overview-data", async (req, res) => {
       mrrTotal:           Number(mrrRow?.[0]?.mrr_total ?? 0) || 0,
       mrrUpgradeCount:    Number(mrrRow?.[0]?.upgrade_count ?? 0),
       mrrByRep:           (mrrByRepRows ?? []).map(r => ({ repName: r.rep_name, mrrTotal: Number(r.mrr_total ?? 0), upgradeCount: Number(r.upgrade_count ?? 0) })),
+      totalCalls:         Number(callsRow?.[0]?.call_count ?? 0),
     });
   } catch (err) {
     console.error('❌ [overview-data]', err.message);

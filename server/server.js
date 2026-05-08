@@ -289,6 +289,30 @@ function priorClosedClause(period) {
   }
 }
 
+function priorCallsClause(period) {
+  switch (period) {
+    case 'today':
+      return `DATE(t.start_time) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'week':
+      return `DATE(t.start_time) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7)
+              AND DATE(t.start_time) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_week':
+      return `DATE(t.start_time) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -14)
+              AND DATE(t.start_time) < DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7)`;
+    case 'month':
+      return `DATE(t.start_time) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))
+              AND DATE(t.start_time) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(t.start_time) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -2))
+              AND DATE(t.start_time) < DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1))`;
+    case 'last_30':
+      return `DATE(t.start_time) >= DATE_SUB(CURRENT_DATE(), 60)
+              AND DATE(t.start_time) < DATE_SUB(CURRENT_DATE(), 30)`;
+    default:
+      return null;
+  }
+}
+
 // ── GET /api/rep-detail ────────────────────────────────────────────────────────
 app.get("/api/rep-detail", async (req, res) => {
   const { ownerId, period = 'week', startDate, endDate, channelType = 'calls' } = req.query;
@@ -390,6 +414,17 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
+    // Prior period Talkdesk CSAT — for delta display
+    const priorCallsClauseStr = hasPrior ? priorCallsClause(period) : null;
+    if (priorCallsClauseStr) {
+      queries.push(
+        query(`SELECT AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat_prior
+               FROM ${TD} t
+               JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+               WHERE cu.id = '${ownerId}' AND ${priorCallsClauseStr} AND t.csat_score IS NOT NULL`)
+      );
+    }
+
     // Productivity: agent status time breakdown from dim_user_status
     const statusFilter = statusDateFilter(period, startDate, endDate);
     const prodPromise = query(
@@ -406,7 +441,7 @@ app.get("/api/rep-detail", async (req, res) => {
        GROUP BY status`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow], statusRows] =
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow, csatPriorRow], statusRows] =
       await Promise.all([Promise.all(queries), prodPromise]);
 
 
@@ -437,10 +472,11 @@ app.get("/api/rep-detail", async (req, res) => {
       mrrPriorTotal,
       mrrUpgrades,
       tdStats: {
-        callCount:   Number(tdStatsRow[0]?.call_count ?? 0),
-        avgTalkSecs: tdStatsRow[0]?.avg_talk != null ? Number(tdStatsRow[0].avg_talk) : null,
-        avgHoldSecs: tdStatsRow[0]?.avg_hold != null ? Number(tdStatsRow[0].avg_hold) : null,
-        avgCsat:     tdStatsRow[0]?.avg_csat != null ? Number(tdStatsRow[0].avg_csat) : null,
+        callCount:    Number(tdStatsRow[0]?.call_count ?? 0),
+        avgTalkSecs:  tdStatsRow[0]?.avg_talk != null ? Number(tdStatsRow[0].avg_talk) : null,
+        avgHoldSecs:  tdStatsRow[0]?.avg_hold != null ? Number(tdStatsRow[0].avg_hold) : null,
+        avgCsat:      tdStatsRow[0]?.avg_csat != null ? Number(tdStatsRow[0].avg_csat) : null,
+        avgCsatPrior: csatPriorRow?.[0]?.avg_csat_prior != null ? Number(csatPriorRow[0].avg_csat_prior) : null,
       },
       tdCalls: (tdCallRows ?? []).map(r => ({
         startTime:     r.start_time,

@@ -484,6 +484,44 @@ app.get("/api/rep-detail", async (req, res) => {
   }
 });
 
+// ── GET /api/rep-productivity-hourly ──────────────────────────────────────────
+app.get('/api/rep-productivity-hourly', async (req, res) => {
+  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  if (!ownerId || !SFID_RE.test(ownerId))
+    return res.status(400).json({ error: 'valid ownerId required' });
+
+  const sf = statusDateFilter(period, startDate, endDate);
+  try {
+    const rows = await query(
+      `SELECT hour_of_day, status, AVG(daily_secs) AS avg_secs
+       FROM (
+         SELECT DATE(dsu.status_start_at)  AS day,
+                HOUR(dsu.status_start_at)  AS hour_of_day,
+                dsu.status,
+                SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS daily_secs
+         FROM ${TD_STATUS} dsu
+         WHERE LOWER(dsu.user_name) = (
+           SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+         ) AND ${sf}
+           AND LOWER(dsu.status) != 'offline'
+         GROUP BY DATE(dsu.status_start_at), HOUR(dsu.status_start_at), dsu.status
+       ) sub
+       GROUP BY hour_of_day, status
+       ORDER BY hour_of_day, status`
+    );
+    res.json({
+      hourly: rows.map(r => ({
+        hour:    Number(r.hour_of_day),
+        status:  r.status,
+        avgSecs: Number(r.avg_secs ?? 0),
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [rep-productivity-hourly]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── GET /api/cases-data ────────────────────────────────────────────────────────
 app.get("/api/cases-data", async (req, res) => {
   const p = req.query;

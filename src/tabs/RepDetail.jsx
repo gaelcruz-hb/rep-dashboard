@@ -1,12 +1,74 @@
 import { useState, useEffect } from 'react';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
+import { Bar } from 'react-chartjs-2';
 import { useDashboard } from '../context/DashboardContext';
 import { useManagerData } from '../data/useManagerData';
 import { parseManagerData } from '../data/parseManagerData';
 import { useRepDetail } from '../data/useRepDetail';
+import { useProductivityHourly } from '../data/useProductivityHourly';
 import { apiFetch } from '../data/apiFetch.js';
 import { Card, CardBody } from '../components/ui/Card';
 import { ORG } from '../data/orgData';
 import { getRepChannelType } from '../data/getRepChannelType';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+const STATUS_COLORS = {
+  'available':          '#5b8af5',
+  'on a call':          '#38d9a9',
+  'chat':               '#a78bfa',
+  'after call work':    '#f5a623',
+  'outbound':           '#60c8f5',
+  'email':              '#c084fc',
+  'email queue ':       '#e879f9',
+  'email/demo':         '#e879f9',
+  'break':              '#6b7280',
+  'lunch ':             '#9ca3af',
+  'meeting/training ':  '#4b5563',
+  'meeting/training':   '#4b5563',
+  'away':               '#374151',
+  'transfer':           '#64748b',
+  'qa':                 '#f472b6',
+  'tier 2 escalation':  '#fb923c',
+  'troubleshooting':    '#22d3ee',
+};
+
+const HOURLY_CHART_OPTS = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: {
+    legend: { display: true, labels: { color: '#6b7280', font: { size: 10 }, boxWidth: 10, boxHeight: 10 } },
+    tooltip: {
+      backgroundColor: '#1e2333', titleColor: '#e8eaf0', bodyColor: '#6b7280',
+      borderColor: '#2a2f42', borderWidth: 1,
+      callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw}m` },
+    },
+  },
+  scales: {
+    x: { stacked: true, grid: { color: '#2a2f42' }, ticks: { color: '#6b7280', font: { size: 10 } } },
+    y: { stacked: true, grid: { color: '#2a2f42' }, ticks: { color: '#6b7280', font: { size: 10 }, callback: v => `${v}m` } },
+  },
+};
+
+function buildHourlyChartData(hourly) {
+  if (!hourly?.length) return null;
+  const hours    = [...new Set(hourly.map(r => r.hour))].sort((a, b) => a - b);
+  const statuses = [...new Set(hourly.map(r => r.status))];
+  const lookup   = {};
+  for (const r of hourly) {
+    if (!lookup[r.hour]) lookup[r.hour] = {};
+    lookup[r.hour][r.status] = r.avgSecs;
+  }
+  const fmtHour = h => h === 0 ? '12 AM' : h === 12 ? '12 PM' : h < 12 ? `${h} AM` : `${h - 12} PM`;
+  return {
+    labels:   hours.map(fmtHour),
+    datasets: statuses.map(s => ({
+      label:           s.trim().replace(/\b\w/g, c => c.toUpperCase()),
+      data:            hours.map(h => Math.round((lookup[h]?.[s] ?? 0) / 60)),
+      backgroundColor: STATUS_COLORS[s] ?? '#2a2f42',
+      borderWidth:     0,
+    })),
+  };
+}
 
 function findManagerForRep(repName) {
   for (const { manager, teams } of ORG) {
@@ -237,6 +299,11 @@ export function RepDetail() {
 
   const repId = repNotInSF ? null : (sfRep?.id ?? rep?.id);
   const channelType = getRepChannelType(sfRep?.name ?? rep?.name ?? activeRep ?? '');
+  const { data: hourlyData, loading: hourlyLoading } = useProductivityHourly(
+    repId, periodFilter,
+    customRangeMode ? customStartDate : undefined,
+    customRangeMode ? customEndDate   : undefined,
+  );
   const { data: detail, loading: detailLoading, error: detailError } = useRepDetail(
     repId, periodFilter,
     customRangeMode ? customStartDate : undefined,
@@ -638,6 +705,31 @@ export function RepDetail() {
           )}
         </Card>
       )}
+
+      {/* Productivity by Hour chart */}
+      {(() => {
+        const chartData = buildHourlyChartData(hourlyData?.hourly);
+        if (!chartData && !hourlyLoading) return null;
+        return (
+          <Card className="mb-4">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="text-xs font-semibold text-text">Productivity by Hour</span>
+              <span className="text-[10px] text-muted font-mono capitalize">{channelType} rep · avg per day · {periodLabel}</span>
+            </div>
+            <div className="p-4">
+              {hourlyLoading ? (
+                <div className="h-48 flex items-center justify-center text-muted text-xs font-mono animate-pulse">Loading…</div>
+              ) : chartData ? (
+                <div style={{ height: 220 }}>
+                  <Bar data={chartData} options={HOURLY_CHART_OPTS} />
+                </div>
+              ) : (
+                <div className="h-24 flex items-center justify-center text-muted text-xs font-mono">No status data for this period</div>
+              )}
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* Instascore rubric heatmap */}
       {instaData?.byRubric?.length > 0 && (() => {

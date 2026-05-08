@@ -572,9 +572,9 @@ export function RepDetail() {
         <TdStatCard label="Avg Hold Time" value={fmtSecs(tdStats?.avgHoldSecs)} loading={detailLoading} />
         <TdStatCard label="Avg CSAT"      value={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'} loading={detailLoading} />
         <TdStatCard
-          label="Productive Time"
+          label="Avg Productive Time"
           value={fmtDuration(productivity?.totalSecs)}
-          sub={channelType === 'calls' ? 'available + on call' : channelType === 'chats' ? 'chat time' : 'calls + chat'}
+          sub="avg per day"
           loading={detailLoading}
         />
       </div>
@@ -618,7 +618,7 @@ export function RepDetail() {
                       </tr>
                     )}
                     <tr className="border-t border-border">
-                      <td className="pt-2 pb-1 font-semibold text-text">Total</td>
+                      <td className="pt-2 pb-1 font-semibold text-text">Avg / Day</td>
                       <td className="pt-2 pb-1 text-right font-semibold text-accent">{fmtDuration(productivity.totalSecs)}</td>
                     </tr>
                   </tbody>

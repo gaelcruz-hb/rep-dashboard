@@ -174,7 +174,7 @@ function statusDateFilter(period, startDate, endDate) {
 function computeProductivity(statusRows, channelType) {
   const byStatus = {};
   for (const row of statusRows ?? []) {
-    byStatus[row.status] = Number(row.total_secs ?? 0);
+    byStatus[row.status] = Number(row.avg_secs ?? 0);
   }
   const availSecs  = byStatus['available']  || 0;
   const onCallSecs = byStatus['on a call']  || 0;
@@ -393,12 +393,17 @@ app.get("/api/rep-detail", async (req, res) => {
     // Productivity: agent status time breakdown from dim_user_status
     const statusFilter = statusDateFilter(period, startDate, endDate);
     const prodPromise = query(
-      `SELECT dsu.status, SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS total_secs
-       FROM ${TD_STATUS} dsu
-       WHERE LOWER(dsu.user_name) = (
-         SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
-       ) AND ${statusFilter}
-       GROUP BY dsu.status`
+      `SELECT status, AVG(daily_secs) AS avg_secs
+       FROM (
+         SELECT DATE(dsu.status_start_at) AS day, dsu.status,
+                SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS daily_secs
+         FROM ${TD_STATUS} dsu
+         WHERE LOWER(dsu.user_name) = (
+           SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+         ) AND ${statusFilter}
+         GROUP BY DATE(dsu.status_start_at), dsu.status
+       ) sub
+       GROUP BY status`
     ).catch(() => []);
 
     const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow], statusRows] =

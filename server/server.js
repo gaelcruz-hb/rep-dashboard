@@ -197,6 +197,14 @@ function ownerWhere({ ownerIds, ownerId } = {}) {
   return `AND ownerid IN (${ids.map(s => `'${s}'`).join(', ')})`;
 }
 
+function cuOwnerWhere(p = {}) {
+  const raw = p.ownerIds || p.ownerId || null;
+  if (!raw) return '';
+  const ids = String(raw).split(',').map(s => s.trim()).filter(s => SFID_RE.test(s));
+  if (!ids.length) return '';
+  return `AND cu.id IN (${ids.map(s => `'${s}'`).join(', ')})`;
+}
+
 function tdPeriod(period) {
   return DATE_TRUNC[period] || DATE_TRUNC.week;
 }
@@ -218,7 +226,8 @@ app.get("/api/overview-data", async (req, res) => {
   const cd = createdSince(p);
 
   try {
-    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows] =
+    const cuOw = cuOwnerWhere(p);
+    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows] =
       await Promise.all([
         query(`SELECT status AS Status, COUNT(*) AS cnt
                FROM ${CASE}
@@ -246,16 +255,61 @@ app.get("/api/overview-data", async (req, res) => {
         query(`SELECT COUNT(*) AS cnt FROM ${CASE}
                WHERE is_current = true AND isclosed = 'true'
                AND ${cl} ${ow}`),
+        query(`SELECT AVG(rep_day_secs) AS avg_productive_secs
+               FROM (
+                 SELECT DATE(dsu.status_start_at) AS day, cu.id,
+                        SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS rep_day_secs
+                 FROM ${TD_STATUS} dsu
+                 JOIN ${USER} cu ON LOWER(dsu.user_name) = LOWER(cu.name) AND cu.is_current = true
+                 WHERE ${statusDateFilter(p.period, p.startDate, p.endDate)}
+                   AND LOWER(dsu.status) NOT IN ('offline','break','lunch ','away','meeting/training ','meeting/training','none')
+                   ${cuOw}
+                 GROUP BY DATE(dsu.status_start_at), cu.id
+               ) sub`).catch(() => []),
+        query(`SELECT hour_of_day, status, AVG(daily_secs) AS avg_secs
+               FROM (
+                 SELECT DATE(dsu.status_start_at) AS day,
+                        HOUR(dsu.status_start_at) AS hour_of_day,
+                        dsu.status,
+                        SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS daily_secs
+                 FROM ${TD_STATUS} dsu
+                 JOIN ${USER} cu ON LOWER(dsu.user_name) = LOWER(cu.name) AND cu.is_current = true
+                 WHERE ${statusDateFilter(p.period, p.startDate, p.endDate)}
+                   AND LOWER(dsu.status) != 'offline'
+                   ${cuOw}
+                 GROUP BY DATE(dsu.status_start_at), HOUR(dsu.status_start_at), dsu.status
+               ) sub
+               GROUP BY hour_of_day, status
+               ORDER BY hour_of_day, status`).catch(() => []),
+        query(`SELECT SUM(upg.net_price_change) AS mrr_total, COUNT(*) AS upgrade_count
+               FROM ${UPGRADES} upg
+               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               WHERE ${mrrDateFilter(p.period, p.startDate, p.endDate)}
+               ${cuOw}`).catch(() => []),
+        query(`SELECT cu.name AS rep_name,
+                      SUM(upg.net_price_change) AS mrr_total,
+                      COUNT(*) AS upgrade_count
+               FROM ${UPGRADES} upg
+               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               WHERE ${mrrDateFilter(p.period, p.startDate, p.endDate)}
+               ${cuOw}
+               GROUP BY cu.name
+               ORDER BY mrr_total DESC`).catch(() => []),
       ]);
 
     res.json({
-      statusTotals:      { records: statusRows },
-      closedToday:       Number(closedTodayRows[0]?.cnt ?? 0),
-      avgResponseHrs:    Number(avgRespRows[0]?.avg_hrs ?? 0),
-      emailsToday:       Number(emailsTodayRows[0]?.cnt ?? 0),
-      dailyClosed14d:    { records: dailyRows },
-      hourlyNew:         { records: hourlyRows },
-      totalClosedPeriod: Number(totalClosedRows[0]?.cnt ?? 0),
+      statusTotals:       { records: statusRows },
+      closedToday:        Number(closedTodayRows[0]?.cnt ?? 0),
+      avgResponseHrs:     Number(avgRespRows[0]?.avg_hrs ?? 0),
+      emailsToday:        Number(emailsTodayRows[0]?.cnt ?? 0),
+      dailyClosed14d:     { records: dailyRows },
+      hourlyNew:          { records: hourlyRows },
+      totalClosedPeriod:  Number(totalClosedRows[0]?.cnt ?? 0),
+      avgProductiveSecs:  Number(prodRow?.[0]?.avg_productive_secs ?? 0) || null,
+      productivityHourly: (prodHourlyRows ?? []).map(r => ({ hour: Number(r.hour_of_day), status: r.status, avgSecs: Number(r.avg_secs ?? 0) })),
+      mrrTotal:           Number(mrrRow?.[0]?.mrr_total ?? 0) || 0,
+      mrrUpgradeCount:    Number(mrrRow?.[0]?.upgrade_count ?? 0),
+      mrrByRep:           (mrrByRepRows ?? []).map(r => ({ repName: r.rep_name, mrrTotal: Number(r.mrr_total ?? 0), upgradeCount: Number(r.upgrade_count ?? 0) })),
     });
   } catch (err) {
     console.error('❌ [overview-data]', err.message);

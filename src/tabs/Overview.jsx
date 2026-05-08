@@ -13,6 +13,7 @@ import { useSlaData } from '../data/useSlaData';
 import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card';
 import { AvsgCard } from '../components/ui/AvsgCard';
 import { RepTable } from '../components/ui/RepTable';
+import { buildHourlyChartData, HOURLY_CHART_OPTS, fmtDuration } from '../data/productivityUtils';
 
 ChartJS.register(
   CategoryScale, LinearScale, BarElement, LineElement,
@@ -216,6 +217,14 @@ export function Overview() {
     statusLabels, statusCounts,
   } = parsed;
 
+  const avgProductiveSecs  = rawData?.avgProductiveSecs ?? null;
+  const productivityHourly = rawData?.productivityHourly ?? [];
+  const prodChartData      = buildHourlyChartData(productivityHourly);
+
+  const mrrTotal        = rawData?.mrrTotal ?? 0;
+  const mrrUpgradeCount = rawData?.mrrUpgradeCount ?? 0;
+  const mrrByRep        = rawData?.mrrByRep ?? [];
+
   // Derive pill counts from caseRows so they always match the table totals
   const totalNew     = caseRows.filter(c => c.Status === 'New').length;
   const totalOpen    = caseRows.filter(c => c.Status === 'Open').length;
@@ -318,9 +327,22 @@ export function Overview() {
         <AvsgCard label="Total Closed"  val={totalClosedPeriod}  goal={goals.closedDay}    higher="good" />
         <AvsgCard label="Avg Response"  val={avgResponseHrs}     goal={goals.responseHrs}  unit="h" higher="bad" />
         <AvsgCard label="Total Emails"  val={emailsToday}        goal={goals.emailsDay}    higher="good" />
-
-        {/* Avg On Hold card removed — Talkdesk data only (tdMetrics?.avgHoldSec) */}
-        {/* <AvsgCard label="Avg Availability" val={tdMetrics?.avgAvailPct ?? null} goal={goals.availPct} unit="%" higher="good" /> */}
+        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
+          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Avg Productive Time</div>
+          <div className="text-2xl font-bold font-mono leading-none mb-1">
+            {loading ? '…' : (avgProductiveSecs ? fmtDuration(avgProductiveSecs) : '—')}
+          </div>
+          <div className="text-[10px] text-muted mt-1">avg per rep / day</div>
+        </div>
+        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-success" />
+          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">MRR Added</div>
+          <div className="text-2xl font-bold font-mono leading-none mb-1 text-success">
+            {loading ? '…' : `$${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+          </div>
+          <div className="text-[10px] text-muted mt-1">{loading ? '' : `${mrrUpgradeCount} upgrade${mrrUpgradeCount !== 1 ? 's' : ''}`}</div>
+        </div>
       </div>
 
       {/* ── Case Status Snapshot ── */}
@@ -461,6 +483,47 @@ export function Overview() {
           </CardBody>
         </Card>
       </div>
+
+      {/* ── Productivity by Hour ── */}
+      {prodChartData && (
+        <Card className="mt-4">
+          <CardHeader title="Productivity by Hour" subtitle={`${periodLabel} · avg per rep / day`} />
+          <CardBody>
+            <div style={{ height: 220 }}>
+              <Bar data={prodChartData} options={HOURLY_CHART_OPTS} />
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* ── MRR by Rep ── */}
+      {mrrByRep.length > 0 && (
+        <Card className="mt-4">
+          <CardHeader title={`MRR by Rep — ${periodLabel}`} subtitle={`${mrrUpgradeCount} upgrade${mrrUpgradeCount !== 1 ? 's' : ''} · $${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} total`} />
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Rep', 'Upgrades', 'MRR Added'].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-4 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mrrByRep.map((row, i) => (
+                  <tr key={i} className="hover:bg-surface2 transition-colors">
+                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-medium">{row.repName}</td>
+                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-mono text-muted">{row.upgradeCount}</td>
+                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-mono text-success font-semibold">
+                      ${row.mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
     </div>
   );

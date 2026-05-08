@@ -367,6 +367,7 @@ app.get("/api/rep-detail", async (req, res) => {
              AND case_response_time_hours__c IS NOT NULL ${owId}`),
       // 6. Talkdesk call stats for current period
       query(`SELECT COUNT(*) AS call_count,
+                    COUNT(CASE WHEN t.csat_score IS NOT NULL THEN 1 END) AS csat_count,
                     AVG(CAST(t.talk_time AS DOUBLE)) AS avg_talk,
                     AVG(CAST(t.holding_time AS DOUBLE)) AS avg_hold,
                     AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat
@@ -414,17 +415,6 @@ app.get("/api/rep-detail", async (req, res) => {
       );
     }
 
-    // Prior period Talkdesk CSAT — for delta display
-    const priorCallsClauseStr = hasPrior ? priorCallsClause(period) : null;
-    if (priorCallsClauseStr) {
-      queries.push(
-        query(`SELECT AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat_prior
-               FROM ${TD} t
-               JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
-               WHERE cu.id = '${ownerId}' AND ${priorCallsClauseStr} AND t.csat_score IS NOT NULL`)
-      );
-    }
-
     // Productivity: agent status time breakdown from dim_user_status
     const statusFilter = statusDateFilter(period, startDate, endDate);
     const prodPromise = query(
@@ -441,7 +431,7 @@ app.get("/api/rep-detail", async (req, res) => {
        GROUP BY status`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow, csatPriorRow], statusRows] =
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow], statusRows] =
       await Promise.all([Promise.all(queries), prodPromise]);
 
 
@@ -472,11 +462,11 @@ app.get("/api/rep-detail", async (req, res) => {
       mrrPriorTotal,
       mrrUpgrades,
       tdStats: {
-        callCount:    Number(tdStatsRow[0]?.call_count ?? 0),
-        avgTalkSecs:  tdStatsRow[0]?.avg_talk != null ? Number(tdStatsRow[0].avg_talk) : null,
-        avgHoldSecs:  tdStatsRow[0]?.avg_hold != null ? Number(tdStatsRow[0].avg_hold) : null,
-        avgCsat:      tdStatsRow[0]?.avg_csat != null ? Number(tdStatsRow[0].avg_csat) : null,
-        avgCsatPrior: csatPriorRow?.[0]?.avg_csat_prior != null ? Number(csatPriorRow[0].avg_csat_prior) : null,
+        callCount:   Number(tdStatsRow[0]?.call_count ?? 0),
+        csatCount:   Number(tdStatsRow[0]?.csat_count ?? 0),
+        avgTalkSecs: tdStatsRow[0]?.avg_talk != null ? Number(tdStatsRow[0].avg_talk) : null,
+        avgHoldSecs: tdStatsRow[0]?.avg_hold != null ? Number(tdStatsRow[0].avg_hold) : null,
+        avgCsat:     tdStatsRow[0]?.avg_csat != null ? Number(tdStatsRow[0].avg_csat) : null,
       },
       tdCalls: (tdCallRows ?? []).map(r => ({
         startTime:     r.start_time,

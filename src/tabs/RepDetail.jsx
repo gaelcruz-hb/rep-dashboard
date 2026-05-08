@@ -66,15 +66,13 @@ function fmtDuration(s) {
 }
 
 // ── Talkdesk stat card ────────────────────────────────────────────────────────
-function TdStatCard({ label, value, sub, delta, loading }) {
-  const deltaColor = delta == null ? '' : delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-muted';
-  const deltaStr   = delta == null ? null : (delta > 0 ? `+${delta.toFixed(2)}` : delta.toFixed(2));
+function TdStatCard({ label, value, sub, corner, loading }) {
   return (
     <div className="bg-surface border border-border rounded-[10px] p-4 pt-5 relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
-      {deltaStr && (
-        <div className={`absolute top-2 right-2.5 text-[10px] font-mono font-semibold ${deltaColor}`}>
-          {deltaStr}
+      {corner && (
+        <div className="absolute top-2 right-2.5 text-[10px] font-mono text-muted">
+          {corner}
         </div>
       )}
       <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">{label}</div>
@@ -580,7 +578,7 @@ export function RepDetail() {
         <TdStatCard
           label="Avg CSAT"
           value={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'}
-          delta={tdStats?.avgCsat != null && tdStats?.avgCsatPrior != null ? tdStats.avgCsat - tdStats.avgCsatPrior : null}
+          corner={tdStats?.callCount > 0 ? `${tdStats.csatCount ?? 0}/${tdStats.callCount}` : null}
           loading={detailLoading}
         />
         <TdStatCard

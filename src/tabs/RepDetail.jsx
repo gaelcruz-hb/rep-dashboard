@@ -575,7 +575,8 @@ export function RepDetail() {
           upgradeCount={mrrUpgrades.length}
           loading={detailLoading}
         />
-        <TdStatCard label="Avg Talk Time" value={fmtSecs(tdStats?.avgTalkSecs)} sub={`${tdStats?.callCount ?? 0} calls`} loading={detailLoading} />
+        <TdStatCard label="Total Calls" value={tdStats ? (tdStats.callCount ?? 0) : '—'} sub={periodLabel} loading={detailLoading} />
+        <TdStatCard label="Avg Talk Time" value={fmtSecs(tdStats?.avgTalkSecs)} loading={detailLoading} />
         <TdStatCard label="Avg Hold Time" value={fmtSecs(tdStats?.avgHoldSecs)} loading={detailLoading} />
         <TdStatCard
           label="Avg CSAT"

@@ -224,6 +224,32 @@ export function Overview() {
   const mrrTotal        = rawData?.mrrTotal ?? 0;
   const mrrUpgradeCount = rawData?.mrrUpgradeCount ?? 0;
   const mrrByRep        = rawData?.mrrByRep ?? [];
+  const mrrWithData     = mrrByRep.filter(r => r.mrrTotal > 0);
+  const mrrChartData    = mrrWithData.length ? {
+    labels: mrrWithData.map(r => r.repName),
+    datasets: [{
+      label: 'MRR Added',
+      data:  mrrWithData.map(r => r.mrrTotal),
+      backgroundColor: 'rgba(56,217,169,0.7)',
+      borderColor:     'rgba(56,217,169,1)',
+      borderWidth: 1,
+      borderRadius: 4,
+    }],
+  } : null;
+  const mrrChartOpts = {
+    ...baseOpts(false),
+    scales: {
+      x: { ticks: TICK, grid: GRID },
+      y: { ticks: { ...TICK, callback: v => `$${Number(v).toLocaleString()}` }, grid: GRID },
+    },
+    plugins: {
+      ...baseOpts(false).plugins,
+      tooltip: {
+        ...TOOLTIP,
+        callbacks: { label: ctx => `$${Number(ctx.raw).toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
+      },
+    },
+  };
 
   // Derive pill counts from caseRows so they always match the table totals
   const totalNew     = caseRows.filter(c => c.Status === 'New').length;
@@ -491,6 +517,18 @@ export function Overview() {
           <CardBody>
             <div style={{ height: 220 }}>
               <Bar data={prodChartData} options={HOURLY_CHART_OPTS} />
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* ── MRR by Agent chart ── */}
+      {mrrChartData && (
+        <Card className="mt-4">
+          <CardHeader title={`MRR by Agent — ${periodLabel}`} subtitle={`${mrrWithData.length} rep${mrrWithData.length !== 1 ? 's' : ''} with upgrades`} />
+          <CardBody>
+            <div style={{ height: 220 }}>
+              <Bar data={mrrChartData} options={mrrChartOpts} />
             </div>
           </CardBody>
         </Card>

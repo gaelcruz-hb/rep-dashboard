@@ -261,7 +261,7 @@ app.get("/api/overview-data", async (req, res) => {
 
   try {
     const cuOw = cuOwnerWhere(p);
-    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows, callsRow] =
+    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows, callsRow, chatsRow] =
       await Promise.all([
         query(`SELECT status AS Status, COUNT(*) AS cnt
                FROM ${CASE}
@@ -334,6 +334,13 @@ app.get("/api/overview-data", async (req, res) => {
                JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
                WHERE ${callsDateFilter(p.period, p.startDate, p.endDate)}
                ${cuOw}`).catch(() => []),
+        query(`SELECT COUNT(*) AS chat_count
+               FROM ${SRC_MESSAGING} m
+               JOIN ${USER} cu ON cu.id = m.ownerid AND cu.is_current = true
+               WHERE m.is_current = 'true'
+                 AND m.channelname != 'Marketing Site Messaging'
+                 AND ${sessionDateFilter(p.period, p.startDate, p.endDate)}
+               ${cuOw}`).catch(() => []),
       ]);
 
     res.json({
@@ -350,9 +357,156 @@ app.get("/api/overview-data", async (req, res) => {
       mrrUpgradeCount:    Number(mrrRow?.[0]?.upgrade_count ?? 0),
       mrrByRep:           (mrrByRepRows ?? []).map(r => ({ repName: r.rep_name, mrrTotal: Number(r.mrr_total ?? 0), upgradeCount: Number(r.upgrade_count ?? 0) })),
       totalCalls:         Number(callsRow?.[0]?.call_count ?? 0),
+      totalChats:         Number(chatsRow?.[0]?.chat_count ?? 0),
     });
   } catch (err) {
     console.error('❌ [overview-data]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── GET /api/overview-rep-table ───────────────────────────────────────────────
+app.get('/api/overview-rep-table', async (req, res) => {
+  const p = req.query;
+  const cuOw = cuOwnerWhere(p);
+  const sfOw = cuOw.replace(/cu\.id/g, 'sf.id');
+
+  const callsFilter = callsDateFilter(p.period, p.startDate, p.endDate);
+  const sessFilter  = sessionDateFilter(p.period, p.startDate, p.endDate);
+  const statFilter  = statusDateFilter(p.period, p.startDate, p.endDate);
+  const mrrFilter   = mrrDateFilter(p.period, p.startDate, p.endDate);
+  const instaFilter = callsFilter.replace(/DATE\(t\.start_time\)/g, 'DATE(asr.CREATED)');
+
+  try {
+    const [callsRows, chatsRows, casesRows, prodRows, mrrRows, instaRows] = await Promise.all([
+      query(`SELECT cu.id AS owner_id, cu.name AS rep_name,
+                    COUNT(*) AS total_calls,
+                    COUNT(CASE WHEN LOWER(t.call_type) = 'inbound'  THEN 1 END) AS inbound_calls,
+                    COUNT(CASE WHEN LOWER(t.call_type) = 'outbound' THEN 1 END) AS outbound_calls,
+                    COUNT(CASE WHEN LOWER(t.call_type) = 'missed'   THEN 1 END) AS missed_calls,
+                    AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat,
+                    COUNT(CASE WHEN t.csat_score IS NOT NULL THEN 1 END) AS csat_count
+             FROM ${TD} t
+             JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+             WHERE ${callsFilter} ${cuOw}
+             GROUP BY cu.id, cu.name`).catch(() => []),
+
+      query(`SELECT cu.id AS owner_id, cu.name AS rep_name, COUNT(*) AS total_chats
+             FROM ${SRC_MESSAGING} m
+             JOIN ${USER} cu ON cu.id = m.ownerid AND cu.is_current = true
+             WHERE m.is_current = 'true'
+               AND m.channelname != 'Marketing Site Messaging'
+               AND ${sessFilter} ${cuOw}
+             GROUP BY cu.id, cu.name`).catch(() => []),
+
+      query(`SELECT c.ownerid AS owner_id, cu.name AS rep_name,
+                    COUNT(*) AS open_cases,
+                    COUNT(CASE WHEN DATE(c.createddate) <= DATE_ADD(CURRENT_DATE(), -90) THEN 1 END) AS hot_cases
+             FROM ${CASE} c
+             JOIN ${USER} cu ON cu.id = c.ownerid AND cu.is_current = true
+             WHERE c.is_current = true AND c.isclosed = 'false' ${cuOw}
+             GROUP BY c.ownerid, cu.name`).catch(() => []),
+
+      query(`SELECT cu.id AS owner_id, cu.name AS rep_name,
+                    sub.status, AVG(sub.daily_secs) AS avg_secs
+             FROM (
+               SELECT DATE(dsu.status_start_at) AS day, LOWER(dsu.user_name) AS user_name, dsu.status,
+                      SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS daily_secs
+               FROM ${TD_STATUS} dsu
+               WHERE ${statFilter}
+                 AND LOWER(dsu.status) IN ('available', 'on a call', 'chat')
+               GROUP BY DATE(dsu.status_start_at), LOWER(dsu.user_name), dsu.status
+             ) sub
+             JOIN ${USER} cu ON LOWER(cu.name) = sub.user_name AND cu.is_current = true
+             WHERE 1=1 ${cuOw}
+             GROUP BY cu.id, cu.name, sub.status`).catch(() => []),
+
+      query(`SELECT cu.id AS owner_id, cu.name AS rep_name,
+                    SUM(upg.net_price_change) AS mrr_total,
+                    COUNT(*) AS upgrade_count
+             FROM ${UPGRADES} upg
+             JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+             WHERE ${mrrFilter} ${cuOw}
+             GROUP BY cu.id, cu.name`).catch(() => []),
+
+      query(`SELECT sf.id AS owner_id, sf.name AS rep_name,
+                    ins.CATEGORY, AVG(CAST(ins.CATEGORY_SCORE_PCNT AS DOUBLE)) AS avg_pct,
+                    COUNT(DISTINCT ins.ASR_LOG_ID) AS scored_convos
+             FROM (
+               SELECT * FROM ${LAI_SCORE}
+               WHERE RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+               QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1
+             ) ins
+             JOIN ${LAI_ASR}  asr ON asr.ID  = ins.ASR_LOG_ID
+             JOIN ${LAI_USER} u   ON u.ID    = asr.USER_ID
+             JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
+             WHERE sf.is_current = true
+               AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+               AND ${instaFilter} ${sfOw}
+             GROUP BY sf.id, sf.name, ins.CATEGORY`).catch(() => []),
+    ]);
+
+    const repMap = {};
+
+    function ensure(id, name) {
+      if (!repMap[id]) repMap[id] = { repName: name };
+    }
+
+    for (const r of callsRows) {
+      ensure(r.owner_id, r.rep_name);
+      Object.assign(repMap[r.owner_id], {
+        totalCalls:    Number(r.total_calls    ?? 0),
+        inboundCalls:  Number(r.inbound_calls  ?? 0),
+        outboundCalls: Number(r.outbound_calls ?? 0),
+        missedCalls:   Number(r.missed_calls   ?? 0),
+        avgCsat:       r.avg_csat != null ? Number(r.avg_csat) : null,
+        csatCount:     Number(r.csat_count ?? 0),
+      });
+    }
+    for (const r of chatsRows) {
+      ensure(r.owner_id, r.rep_name);
+      repMap[r.owner_id].totalChats = Number(r.total_chats ?? 0);
+    }
+    for (const r of casesRows) {
+      ensure(r.owner_id, r.rep_name);
+      repMap[r.owner_id].openCases = Number(r.open_cases ?? 0);
+      repMap[r.owner_id].hotCases  = Number(r.hot_cases  ?? 0);
+    }
+    for (const r of mrrRows) {
+      ensure(r.owner_id, r.rep_name);
+      repMap[r.owner_id].mrrTotal     = Number(r.mrr_total    ?? 0);
+      repMap[r.owner_id].upgradeCount = Number(r.upgrade_count ?? 0);
+    }
+
+    const prodByRep = {};
+    for (const r of prodRows) {
+      if (!prodByRep[r.owner_id]) prodByRep[r.owner_id] = { name: r.rep_name, rows: [] };
+      prodByRep[r.owner_id].rows.push({ status: r.status, avg_secs: r.avg_secs });
+    }
+    for (const [id, v] of Object.entries(prodByRep)) {
+      ensure(id, v.name);
+      repMap[id].productivitySecs = computeProductivity(v.rows, 'all').totalSecs;
+    }
+
+    const instaByRep = {};
+    for (const r of instaRows) {
+      if (!instaByRep[r.owner_id]) instaByRep[r.owner_id] = { name: r.rep_name, cats: [], convos: 0 };
+      instaByRep[r.owner_id].cats.push({ category: r.CATEGORY, score: Number(r.avg_pct ?? 0) });
+      instaByRep[r.owner_id].convos = Math.max(instaByRep[r.owner_id].convos, Number(r.scored_convos ?? 0));
+    }
+    for (const [id, v] of Object.entries(instaByRep)) {
+      ensure(id, v.name);
+      repMap[id].instascore   = weightedInstascore(v.cats);
+      repMap[id].scoredConvos = v.convos;
+    }
+
+    const reps = Object.values(repMap)
+      .filter(r => r.repName)
+      .sort((a, b) => (a.repName ?? '').localeCompare(b.repName ?? ''));
+
+    res.json({ reps });
+  } catch (err) {
+    console.error('❌ [overview-rep-table]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

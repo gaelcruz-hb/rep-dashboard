@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import { Bar, Line } from 'react-chartjs-2';
 import { useDashboard } from '../context/DashboardContext';
 import { useOverviewData } from '../data/useOverviewData';
+import { useOverviewRepTable } from '../data/useOverviewRepTable';
 import { parseOverviewData } from '../data/parseOverviewData';
 import { useSlaData } from '../data/useSlaData';
 // import { useTalkdeskMetrics } from '../data/useTalkdeskMetrics';
@@ -82,7 +83,7 @@ function StatCard({ label, value }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function Overview() {
-  const { goals, managerFilter, teamFilter, repFilter, periodFilter, repList, filteredRepNames, availableReps, customRangeMode, customStartDate, customEndDate } = useDashboard();
+  const { goals, managerFilter, teamFilter, repFilter, periodFilter, repList, filteredRepNames, availableReps, customRangeMode, customStartDate, customEndDate, setActiveTab, selectedRep, setSelectedRep } = useDashboard();
 
   // Delegate to availableReps (already handles all filter combos correctly)
   const effectiveOwnerIds = useMemo(() => {
@@ -124,6 +125,12 @@ export function Overview() {
     ...dateProps,
     ownerIds: effectiveOwnerIds.length ? effectiveOwnerIds : undefined,
     ownerId:  ownerIdParam,
+  });
+  const { data: repTableRaw, loading: repTableLoading } = useOverviewRepTable({
+    manager:  managerParam,
+    ownerId:  ownerIdParam,
+    ownerIds: effectiveOwnerIds.length ? effectiveOwnerIds : undefined,
+    ...dateProps,
   });
   // const { data: tdMetrics } = useTalkdeskMetrics();
   const parsed = parseOverviewData(rawData);
@@ -225,6 +232,9 @@ export function Overview() {
   const mrrUpgradeCount = rawData?.mrrUpgradeCount ?? 0;
   const mrrByRep        = rawData?.mrrByRep ?? [];
   const totalCalls      = rawData?.totalCalls ?? 0;
+  const totalChats      = rawData?.totalChats ?? 0;
+  const _rawRepRows = repTableRaw?.reps ?? [];
+  const repRows = filteredRepNames ? _rawRepRows.filter(r => filteredRepNames.has(r.repName)) : _rawRepRows;
   const mrrWithData     = mrrByRep.filter(r => r.mrrTotal > 0);
   const mrrChartData    = mrrWithData.length ? {
     labels: mrrWithData.map(r => r.repName),
@@ -318,8 +328,9 @@ export function Overview() {
     yesterday:  { period: 'Yesterday',  closed: 'Closed Yesterday',  emails: 'Emails Yesterday' },
     week:       { period: 'This Week',  closed: 'Closed This Week',  emails: 'Emails This Week' },
     last_week:  { period: 'Last Week',  closed: 'Closed Last Week',  emails: 'Emails Last Week' },
-    month:      { period: 'This Month', closed: 'Closed This Month', emails: 'Emails This Month' },
-    last_month: { period: 'Last Month', closed: 'Closed Last Month', emails: 'Emails Last Month' },
+    month:      { period: 'This Month',   closed: 'Closed This Month',   emails: 'Emails This Month' },
+    last_month: { period: 'Last Month',   closed: 'Closed Last Month',   emails: 'Emails Last Month' },
+    last_30:    { period: 'Last 30 Days', closed: 'Closed Last 30 Days', emails: 'Emails Last 30 Days' },
   };
   const { period: periodLabel, closed: closedLabel, emails: emailsLabel } =
     customRangeMode && customStartDate && customEndDate
@@ -333,6 +344,7 @@ export function Overview() {
     last_week:  { title: 'Week over Week — Closed',    subtitle: 'Last week vs prior week',   current: 'Last Week',  prior: 'Prior Week' },
     month:      { title: 'Period Comparison — Closed', subtitle: 'Recent 7 days vs prior 7',  current: 'Recent 7d',  prior: 'Prior 7d'   },
     last_month: { title: 'Period Comparison — Closed', subtitle: 'Recent 7 days vs prior 7',  current: 'Recent 7d',  prior: 'Prior 7d'   },
+    last_30:    { title: 'Period Comparison — Closed', subtitle: 'Recent 7 days vs prior 7',  current: 'Recent 7d',  prior: 'Prior 7d'   },
   };
   const wowMeta = customRangeMode
     ? { title: 'Period Comparison — Closed', subtitle: 'Recent 7 days vs prior 7', current: 'Recent 7d', prior: 'Prior 7d' }
@@ -367,6 +379,14 @@ export function Overview() {
           <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Total Calls</div>
           <div className="text-2xl font-bold font-mono leading-none mb-1">
             {loading ? '…' : totalCalls.toLocaleString()}
+          </div>
+          <div className="text-[10px] text-muted mt-1">{periodLabel}</div>
+        </div>
+        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ backgroundColor: '#38d9a9' }} />
+          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Total Chats</div>
+          <div className="text-2xl font-bold font-mono leading-none mb-1" style={{ color: '#38d9a9' }}>
+            {loading ? '…' : totalChats.toLocaleString()}
           </div>
           <div className="text-[10px] text-muted mt-1">{periodLabel}</div>
         </div>
@@ -543,34 +563,90 @@ export function Overview() {
         </Card>
       )}
 
-      {/* ── MRR by Rep ── */}
-      {mrrByRep.length > 0 && (
-        <Card className="mt-4">
-          <CardHeader title={`MRR by Rep — ${periodLabel}`} subtitle={`${mrrUpgradeCount} upgrade${mrrUpgradeCount !== 1 ? 's' : ''} · $${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} total`} />
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  {['Rep', 'Upgrades', 'MRR Added'].map(h => (
-                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-4 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {mrrByRep.map((row, i) => (
+      {/* ── Rep Summary Table ── */}
+      <Card className="mt-4">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="text-xs font-semibold text-text">Rep Summary — {periodLabel}</div>
+          {repTableLoading && <span className="text-[10px] text-muted font-mono animate-pulse">Loading…</span>}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                {[
+                  { label: 'Rep',          color: null },
+                  { label: 'Instascore',   color: '#a855f7' },
+                  { label: 'TD CSAT',      color: '#f5a623' },
+                  { label: 'Inbound',      color: '#f5a623' },
+                  { label: 'Chats',        color: '#38d9a9' },
+                  { label: 'Outbound',     color: '#f5a623' },
+                  { label: 'Missed',       color: '#e05c5c' },
+                  { label: 'Total Calls',  color: '#f5a623' },
+                  { label: 'Open Cases',   color: '#5b8af5' },
+                  { label: 'Hot Cases',    color: '#e05c5c' },
+                  { label: 'Productivity', color: '#f5a623' },
+                  { label: 'MRR',          color: '#38d9a9' },
+                ].map(({ label, color }) => (
+                  <th key={label} className="text-left text-[10px] font-mono uppercase tracking-[1px] px-3 py-2.5 border-b border-border whitespace-nowrap"
+                    style={{ color: color ?? '#6b7280' }}>
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {repTableLoading && repRows.length === 0 ? (
+                <tr><td colSpan={12} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading rep data…</td></tr>
+              ) : repRows.length === 0 ? (
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-muted text-xs font-mono">No data for this period</td></tr>
+              ) : repRows.map((r, i) => {
+                const instaColor = r.instascore == null ? '#6b7280'
+                  : r.instascore >= 85 ? '#38d9a9'
+                  : r.instascore >= 75 ? '#f5a623'
+                  : '#e05c5c';
+                return (
                   <tr key={i} className="hover:bg-surface2 transition-colors">
-                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-medium">{row.repName}</td>
-                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-mono text-muted">{row.upgradeCount}</td>
-                    <td className="px-4 py-2.5 text-xs border-b border-border/50 font-mono text-success font-semibold">
-                      ${row.mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-medium whitespace-nowrap">
+                      <button
+                        onClick={() => { setSelectedRep(r.repName); setActiveTab('rep'); }}
+                        className="text-accent hover:underline cursor-pointer text-left"
+                      >{r.repName}</button>
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono font-semibold whitespace-nowrap" style={{ color: instaColor }}>
+                      {r.instascore != null ? `${r.instascore}%` : '—'}
+                      {r.scoredConvos > 0 && <span className="text-[10px] text-muted ml-1">({r.scoredConvos})</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap">
+                      {r.avgCsat != null ? (
+                        <span className="text-text">{r.avgCsat.toFixed(1)}<span className="text-muted text-[10px] ml-0.5">({r.csatCount})</span></span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted">{r.inboundCalls ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono" style={{ color: '#38d9a9' }}>{r.totalChats ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted">{r.outboundCalls ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono" style={{ color: r.missedCalls > 0 ? '#e05c5c' : '#6b7280' }}>
+                      {r.missedCalls ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-text font-semibold">{r.totalCalls ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted">{r.openCases ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap">
+                      {r.hotCases > 0
+                        ? <span style={{ color: '#e05c5c' }}>🔥 {r.hotCases}</span>
+                        : <span className="text-muted">{r.hotCases ?? '—'}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {r.productivitySecs > 0 ? fmtDuration(r.productivitySecs) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap" style={{ color: r.mrrTotal > 0 ? '#38d9a9' : '#6b7280' }}>
+                      {r.mrrTotal > 0 ? `$${r.mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
     </div>
   );

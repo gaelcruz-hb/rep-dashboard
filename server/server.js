@@ -317,14 +317,14 @@ app.get("/api/overview-data", async (req, res) => {
                ORDER BY hour_of_day, status`).catch(() => []),
         query(`SELECT SUM(upg.net_price_change) AS mrr_total, COUNT(*) AS upgrade_count
                FROM ${UPGRADES} upg
-               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
                WHERE ${mrrDateFilter(p.period, p.startDate, p.endDate)}
                ${cuOw}`).catch(() => []),
         query(`SELECT cu.name AS rep_name,
                       SUM(upg.net_price_change) AS mrr_total,
                       COUNT(*) AS upgrade_count
                FROM ${UPGRADES} upg
-               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
                WHERE ${mrrDateFilter(p.period, p.startDate, p.endDate)}
                ${cuOw}
                GROUP BY cu.name
@@ -425,7 +425,7 @@ app.get('/api/overview-rep-table', async (req, res) => {
                     SUM(upg.net_price_change) AS mrr_total,
                     COUNT(*) AS upgrade_count
              FROM ${UPGRADES} upg
-             JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+             JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
              WHERE ${mrrFilter} ${cuOw}
              GROUP BY cu.id, cu.name`).catch(() => []),
 
@@ -635,7 +635,7 @@ app.get("/api/rep-detail", async (req, res) => {
                     upg.start_tier, upg.end_tier, upg.net_price_change,
                     COALESCE(loc.name, comp.name) AS location_name
              FROM ${UPGRADES} upg
-             JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+             JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
              LEFT JOIN ${LOCATIONS} loc ON CAST(loc.location_id AS STRING) = CAST(upg.location_id AS STRING)
              LEFT JOIN ${COMPANIES} comp ON CAST(comp.company_id AS STRING) = CAST(upg.company_id AS STRING)
              WHERE cu.id = '${ownerId}'
@@ -673,7 +673,7 @@ app.get("/api/rep-detail", async (req, res) => {
       queries.push(
         query(`SELECT SUM(upg.net_price_change) AS mrr_prior
                FROM ${UPGRADES} upg
-               JOIN ${USER} cu ON TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) AND cu.is_current = true
+               JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
                WHERE cu.id = '${ownerId}'
                  AND ${mrrPriorFilter}`)
       );
@@ -1475,6 +1475,23 @@ if (isDev) {
 // ── GET /api/diagnostics ───────────────────────────────────────────────────────
 app.get('/api/diagnostics', (_req, res) => {
   res.json(getDiagnostics());
+});
+
+app.get('/api/diagnostics/mrr-name', async (req, res) => {
+  const { name = 'shakil' } = req.query;
+  const like = `%${name.toLowerCase()}%`;
+  try {
+    const [userRows, upgradeRows] = await Promise.all([
+      query(`SELECT id, name, email FROM ${USER} WHERE LOWER(name) LIKE '${like}' AND is_current = true`),
+      query(`SELECT DISTINCT agent_name, COUNT(*) AS upgrade_count, SUM(net_price_change) AS mrr_total
+             FROM ${UPGRADES}
+             WHERE LOWER(agent_name) LIKE '${like}'
+             GROUP BY agent_name ORDER BY agent_name`),
+    ]);
+    res.json({ users: userRows, upgrades: upgradeRows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /api/diagnostics/levelai ──────────────────────────────────────────────

@@ -37,6 +37,8 @@ const LOCATIONS  = 'prod_redshift_replica.bizops_staging.locations';
 const COMPANIES  = 'prod_redshift_replica.bizops_staging.companies';
 const TDCALLS        = 'stage_raw.talkdesk.calls';
 const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
+const CS_TICKETS     = 'prod_redshift_replica.bizops.cs_tickets_aggregated';
+const SRC_MESSAGING  = 'ext_crm.src_messaging_session';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -167,6 +169,23 @@ function statusDateFilter(period, startDate, endDate) {
       return `DATE(dsu.status_start_at) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(dsu.status_start_at) < CURRENT_DATE()`;
     default:
       return `DATE(dsu.status_start_at) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+  }
+}
+
+function sessionDateFilter(period, startDate, endDate) {
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `DATE(m.createddate) BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':     return `DATE(m.createddate) = CURRENT_DATE()`;
+    case 'yesterday': return `DATE(m.createddate) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'last_week':
+      return `DATE(m.createddate) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(m.createddate) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(m.createddate) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(m.createddate) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `DATE(m.createddate) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(m.createddate) < CURRENT_DATE()`;
+    default:
+      return `DATE(m.createddate) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
   }
 }
 
@@ -392,7 +411,8 @@ app.get("/api/rep-detail", async (req, res) => {
         : priorClause.replace(/DATE\(closeddate\)/g, 'DATE(upg.marked_month)'))
     : null;
 
-  const callsFilter = callsDateFilter(period, startDate, endDate);
+  const callsFilter   = callsDateFilter(period, startDate, endDate);
+  const ticketsFilter = sessionDateFilter(period, startDate, endDate);
 
   try {
     const queries = [
@@ -452,6 +472,22 @@ app.get("/api/rep-detail", async (req, res) => {
              WHERE cu.id = '${ownerId}'
                AND ${mrrFilter}
              ORDER BY upg.marked_month DESC, upg.upgrade_at DESC`),
+      // 9. SF Chat sessions with timing data for current period
+      query(`SELECT m.id AS session_id,
+                    m.createddate AS chat_start_time,
+                    m.accepttime AS agent_accept_time,
+                    m.endtime AS chat_end_time,
+                    DATEDIFF(SECOND, m.createddate, m.endtime) AS duration_seconds,
+                    DATEDIFF(SECOND, m.createddate, m.accepttime) AS wait_seconds,
+                    t.company_id, t.ticket_issue_type, t.company_age_bucket, t.paying
+             FROM ${SRC_MESSAGING} m
+             LEFT JOIN ${CS_TICKETS} t
+               ON t.ticket_id = m.id AND t.ticket_type = 'Chat' AND t.ticket_system = 'Salesforce'
+             WHERE m.ownerid = '${ownerId}'
+               AND m.is_current = 'true'
+               AND m.channelname != 'Marketing Site Messaging'
+               AND ${ticketsFilter}
+             ORDER BY m.createddate DESC`),
     ];
 
     // 7. Prior period closed count — only when a comparison exists
@@ -490,8 +526,25 @@ app.get("/api/rep-detail", async (req, res) => {
        GROUP BY status`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, priorRow, mrrPriorRow], statusRows] =
-      await Promise.all([Promise.all(queries), prodPromise]);
+    // Chat productivity: avg daily time spent actively handling chats (accepttime → endtime)
+    const chatProdPromise = query(
+      `SELECT AVG(daily_secs) AS avg_secs
+       FROM (
+         SELECT DATE(m.createddate) AS day,
+                SUM(DATEDIFF(SECOND, m.accepttime, m.endtime)) AS daily_secs
+         FROM ${SRC_MESSAGING} m
+         WHERE m.ownerid = '${ownerId}'
+           AND m.is_current = 'true'
+           AND m.channelname != 'Marketing Site Messaging'
+           AND m.accepttime IS NOT NULL
+           AND m.endtime IS NOT NULL
+           AND ${ticketsFilter}
+         GROUP BY DATE(m.createddate)
+       ) sub`
+    ).catch(() => []);
+
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, priorRow, mrrPriorRow], statusRows, chatProdRows] =
+      await Promise.all([Promise.all(queries), prodPromise, chatProdPromise]);
 
 
     const mrrUpgrades = (mrrRows ?? []).map(r => ({
@@ -536,6 +589,19 @@ app.get("/api/rep-detail", async (req, res) => {
         recordingLink: r.recording_link ?? null,
       })),
       productivity: computeProductivity(statusRows, channelType),
+      chatProductivitySecs: chatProdRows?.[0]?.avg_secs != null ? Number(chatProdRows[0].avg_secs) : null,
+      sfChats: (sfChatRows ?? []).map(r => ({
+        sessionId:        r.session_id,
+        startTime:        r.chat_start_time,
+        acceptTime:       r.agent_accept_time,
+        endTime:          r.chat_end_time,
+        durationSecs:     r.duration_seconds != null ? Number(r.duration_seconds) : null,
+        waitSecs:         r.wait_seconds     != null ? Number(r.wait_seconds)     : null,
+        companyId:        r.company_id ?? null,
+        issueType:        r.ticket_issue_type ?? null,
+        companyAgeBucket: r.company_age_bucket ?? null,
+        paying:           r.paying != null ? Number(r.paying) : null,
+      })),
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);

@@ -201,6 +201,7 @@ export function RepDetail() {
   const [convoExpanded, setConvoExpanded]       = useState(false);
   const [mrrExpanded, setMrrExpanded]           = useState(false);
   const [tdCallsExpanded, setTdCallsExpanded]   = useState(false);
+  const [sfChatsExpanded, setSfChatsExpanded]   = useState(false);
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
@@ -340,6 +341,8 @@ export function RepDetail() {
   const mrrUpgrades       = detail?.mrrUpgrades        ?? [];
   const tdStats           = detail?.tdStats            ?? null;
   const tdCalls           = detail?.tdCalls            ?? [];
+  const sfChats             = detail?.sfChats              ?? [];
+  const chatProductivitySecs = detail?.chatProductivitySecs ?? null;
   const productivity      = detail?.productivity       ?? null;
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
@@ -565,31 +568,160 @@ export function RepDetail() {
         <div className="text-xs text-muted">{rep?.team ?? '—'} · Manager: {findManagerForRep(sfRep?.name ?? rep?.name ?? activeRep)}</div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid gap-3.5 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-        {metrics.map(m => <RepKpiCard key={m.label} {...m} />)}
-        <MrrCard
-          total={mrrTotal}
-          prior={hasPrior ? mrrPriorTotal : null}
-          priorLabel={priorLabel}
-          upgradeCount={mrrUpgrades.length}
-          loading={detailLoading}
-        />
-        <TdStatCard label="Total Calls" value={tdStats ? (tdStats.callCount ?? 0) : '—'} sub={periodLabel} loading={detailLoading} />
-        <TdStatCard label="Avg Talk Time" value={fmtSecs(tdStats?.avgTalkSecs)} loading={detailLoading} />
-        <TdStatCard label="Avg Hold Time" value={fmtSecs(tdStats?.avgHoldSecs)} loading={detailLoading} />
-        <TdStatCard
-          label="Avg CSAT"
-          value={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'}
-          corner={tdStats?.callCount > 0 ? `${tdStats.csatCount ?? 0}/${tdStats.callCount}` : null}
-          loading={detailLoading}
-        />
-        <TdStatCard
-          label="Avg Productive Time"
-          value={fmtDuration(productivity?.totalSecs)}
-          sub="avg per day"
-          loading={detailLoading}
-        />
+      {/* KPI cards — grouped by source */}
+      <div className="mb-4 flex gap-3 items-start">
+
+        {/* Salesforce */}
+        <div className="flex-1 min-w-0 bg-surface border border-[#5b8af5]/30 rounded-xl overflow-hidden">
+          <div className="h-[3px] bg-[#5b8af5]" />
+          <div className="px-4 py-3">
+            <div className="text-[10px] text-[#5b8af5] font-mono uppercase tracking-[1px] font-semibold mb-1">Salesforce</div>
+            {/* MRR hero */}
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-2xl font-bold font-mono text-text leading-none">
+                {detailLoading ? '…' : `$${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              </span>
+              {!detailLoading && mrrPriorTotal != null && (() => {
+                const delta = mrrTotal - mrrPriorTotal;
+                const pct = mrrPriorTotal !== 0 ? Math.abs(delta / mrrPriorTotal * 100).toFixed(1) : null;
+                const up = delta >= 0;
+                return (
+                  <span className={`text-sm font-mono font-semibold ${up ? 'text-success' : 'text-danger'}`}>
+                    {up ? '▲' : '▼'}{pct != null ? ` ${pct}%` : ''}
+                  </span>
+                );
+              })()}
+            </div>
+            <div className="divide-y divide-border/40">
+              {[
+                { label: 'Open Cases',              val: adjOpenCases,                    goal: goals.maxOpen,       lower: true  },
+                { label: 'On Hold',                 val: adjHoldCases,                    goal: goals.maxOnHold,     lower: true  },
+                { label: `Closed (${periodLabel})`, val: closedPeriod,                    goal: goals.closedDay * 5, lower: false },
+                { label: 'Avg Response',            val: `${avgResponseHrs.toFixed(1)}h`, goal: goals.responseHrs,   lower: true  },
+              ].map(({ label, val, goal, lower }) => {
+                const num = parseFloat(val);
+                const isGood = lower ? num <= goal : num >= goal;
+                const pct = goal > 0
+                  ? lower
+                    ? Math.max(0, Math.min(100, (1 - num / goal) * 100))
+                    : Math.min(100, (num / goal) * 100)
+                  : 0;
+                return (
+                  <div key={label} className="flex items-center justify-between py-2 gap-3">
+                    <span className="text-[11px] text-muted shrink-0">{label}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-16 h-1.5 bg-border rounded-full overflow-hidden shrink-0">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${isGood ? 'bg-success' : 'bg-danger'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-bold font-mono text-text shrink-0">{detailLoading ? '…' : val}</span>
+                      <span className={`text-[10px] font-mono shrink-0 ${isGood ? 'text-success' : 'text-danger'}`}>{isGood ? '✓' : '✗'}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Talkdesk */}
+        <div className="flex-1 min-w-0 bg-surface border border-[#f5a623]/30 rounded-xl overflow-hidden">
+          <div className="h-[3px] bg-[#f5a623]" />
+          <div className="px-4 py-3">
+            <div className="text-[10px] text-[#f5a623] font-mono uppercase tracking-[1px] font-semibold mb-1">Talkdesk</div>
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-2xl font-bold font-mono text-text leading-none">
+                {detailLoading ? '…' : (tdStats?.callCount ?? 0)}
+              </span>
+              <span className="text-[11px] text-muted font-mono">calls</span>
+            </div>
+            <div className="divide-y divide-border/40">
+              {[
+                { label: 'Avg Talk Time',       val: fmtSecs(tdStats?.avgTalkSecs) },
+                { label: 'Avg Hold Time',       val: fmtSecs(tdStats?.avgHoldSecs) },
+                { label: 'Avg CSAT',            val: tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—' },
+                { label: 'Avg Productive Time', val: fmtDuration(productivity?.totalSecs) },
+              ].map(({ label, val }) => (
+                <div key={label} className="flex items-center justify-between py-2">
+                  <span className="text-[11px] text-muted">{label}</span>
+                  <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat */}
+        <div className="flex-1 min-w-0 bg-surface border border-[#38d9a9]/30 rounded-xl overflow-hidden">
+          <div className="h-[3px] bg-[#38d9a9]" />
+          <div className="px-4 py-3">
+            <div className="text-[10px] text-[#38d9a9] font-mono uppercase tracking-[1px] font-semibold mb-1">Chat</div>
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-2xl font-bold font-mono text-text leading-none">
+                {detailLoading ? '…' : sfChats.length}
+              </span>
+              <span className="text-[11px] text-muted font-mono">chats</span>
+            </div>
+            {(() => {
+              const timedHandle = sfChats.filter(c => c.durationSecs != null && c.durationSecs > 0);
+              const timedWait   = sfChats.filter(c => c.waitSecs     != null && c.waitSecs   > 0);
+              return (
+                <div className="divide-y divide-border/40">
+                  {[
+                    { label: 'Avg Handle Time',     val: timedHandle.length ? fmtSecs(timedHandle.reduce((s, c) => s + c.durationSecs, 0) / timedHandle.length) : '—' },
+                    { label: 'Avg Wait Time',        val: timedWait.length   ? fmtSecs(timedWait.reduce((s, c) => s + c.waitSecs, 0)     / timedWait.length)   : '—' },
+                    { label: 'Avg Chat Productive',  val: fmtDuration(chatProductivitySecs) },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="flex items-center justify-between py-2">
+                      <span className="text-[11px] text-muted">{label}</span>
+                      <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : val}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* LevelAI */}
+        <div className="flex-1 min-w-0 bg-surface border border-[#a855f7]/30 rounded-xl overflow-hidden">
+          <div className="h-[3px] bg-[#a855f7]" />
+          <div className="px-4 py-3">
+            <div className="text-[10px] text-[#a855f7] font-mono uppercase tracking-[1px] font-semibold mb-1">LevelAI</div>
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="text-2xl font-bold font-mono text-text leading-none">
+                {instaLoading ? '…' : instaData?.overall != null ? `${instaData.overall}%` : '—'}
+              </span>
+              {instaData?.overall != null && (
+                <span className={`text-sm font-mono font-semibold ${instaData.overall >= goals.instascore ? 'text-success' : 'text-danger'}`}>
+                  {instaData.overall >= goals.instascore ? '✓' : '✗'}
+                </span>
+              )}
+            </div>
+            {instaData?.overall != null && (
+              <div className="mb-3">
+                <div className="w-full h-1.5 bg-border rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${instaData.overall >= goals.instascore ? 'bg-success' : 'bg-danger'}`}
+                    style={{ width: `${Math.min(100, (instaData.overall / goals.instascore) * 100)}%` }}
+                  />
+                </div>
+                <div className="text-[9px] text-muted font-mono mt-1">Goal: {goals.instascore}%</div>
+              </div>
+            )}
+            <div className="divide-y divide-border/40">
+              {instaData?.conversationCount > 0 && (
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-[11px] text-muted">Conversations Scored</span>
+                  <span className="text-sm font-bold font-mono text-text">{instaData.conversationCount}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
       </div>
 
       {/* Productivity breakdown */}
@@ -1172,6 +1304,61 @@ export function RepDetail() {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* SF Chats card */}
+      <Card className="mb-4">
+        <button
+          onClick={() => setSfChatsExpanded(e => !e)}
+          className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+        >
+          <span className="text-xs font-semibold text-text">SF Chats</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : sfChats.length} chat{sfChats.length !== 1 ? 's' : ''}</span>
+            <span className="text-muted text-xs">{sfChatsExpanded ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {sfChatsExpanded && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Start Time', 'Duration', 'Wait', 'Issue Type', 'Company Age', 'Paying'].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {detailLoading ? (
+                  <tr><td colSpan={6} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading chats…</td></tr>
+                ) : sfChats.length === 0 ? (
+                  <tr><td colSpan={6} className="px-3 py-6 text-center text-muted text-xs font-mono">No chats in this period</td></tr>
+                ) : sfChats.map((c, i) => (
+                  <tr key={c.sessionId ?? i} className="hover:bg-surface2 transition-colors">
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {c.startTime ? String(c.startTime).slice(0, 16).replace('T', ' ') : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap">
+                      {fmtSecs(c.durationSecs)}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {fmtSecs(c.waitSecs)}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      {c.issueType ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {c.companyAgeBucket ?? '—'}
+                    </td>
+                    <td className={`px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap ${c.paying === 1 ? 'text-success' : 'text-muted'}`}>
+                      {c.paying === 1 ? 'Yes' : c.paying === 0 ? 'No' : '—'}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

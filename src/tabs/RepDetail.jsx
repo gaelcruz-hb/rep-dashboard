@@ -341,8 +341,9 @@ export function RepDetail() {
   const mrrUpgrades       = detail?.mrrUpgrades        ?? [];
   const tdStats           = detail?.tdStats            ?? null;
   const tdCalls           = detail?.tdCalls            ?? [];
-  const sfChats             = detail?.sfChats              ?? [];
+  const sfChats              = detail?.sfChats              ?? [];
   const chatProductivitySecs = detail?.chatProductivitySecs ?? null;
+  const priorPeriod          = detail?.priorPeriod          ?? null;
   const productivity      = detail?.productivity       ?? null;
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
@@ -425,7 +426,7 @@ export function RepDetail() {
   const earlyPeriodNote = 'No closed cases yet — expected early in the period';
 
   const metrics = [
-    { label: 'Open Cases',            value: adjOpenCases,              goal: goals.maxOpen,       lower: true  },
+    { label: 'Active Cases',           value: adjOpenCases,              goal: goals.maxOpen,       lower: true  },
     { label: 'On Hold',               value: adjHoldCases,              goal: goals.maxOnHold,     lower: true  },
     { label: `Closed ${periodLabel}`, value: closedPeriod,              goal: goals.closedDay * 5, lower: false,
       note: isEarlyPeriod && closedPeriod === 0 ? earlyPeriodNote : null },
@@ -594,7 +595,7 @@ export function RepDetail() {
             </div>
             <div className="divide-y divide-border/40">
               {[
-                { label: 'Open Cases',              val: adjOpenCases,                    goal: goals.maxOpen,       lower: true  },
+                { label: 'Active Cases',             val: adjOpenCases,                    goal: goals.maxOpen,       lower: true  },
                 { label: 'On Hold',                 val: adjHoldCases,                    goal: goals.maxOnHold,     lower: true  },
                 { label: `Closed (${periodLabel})`, val: closedPeriod,                    goal: goals.closedDay * 5, lower: false },
                 { label: 'Avg Response',            val: `${avgResponseHrs.toFixed(1)}h`, goal: goals.responseHrs,   lower: true  },
@@ -733,6 +734,107 @@ export function RepDetail() {
         </div>
 
       </div>
+
+      {/* Period over Period — moved here from below */}
+      {hasPrior && (
+        <Card className="mb-4">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <div className="text-xs font-semibold text-text">Period over Period</div>
+            <div className="text-[10px] text-muted font-mono">{priorLabel} → {periodLabel}</div>
+          </div>
+          <CardBody>
+            {(() => {
+              function DeltaVal({ curr, prior, lower = false, fmt = 'num' }) {
+                if (curr == null || prior == null) return <span className="text-muted font-mono text-[11px]">—</span>;
+                const diff = curr - prior;
+                if (diff === 0) return <span className="text-muted font-mono text-[11px]">—</span>;
+                const isGood = lower ? diff < 0 : diff > 0;
+                const cls = isGood ? 'text-success' : 'text-danger';
+                const sign = diff > 0 ? '+' : '';
+                let str;
+                if (fmt === 'secs')    str = `${diff > 0 ? '+' : ''}${fmtSecs(Math.abs(diff))}`;
+                else if (fmt === 'dur') str = `${diff > 0 ? '+' : '-'}${fmtDuration(Math.abs(diff))}`;
+                else if (fmt === 'usd') str = `${diff > 0 ? '+' : '-'}$${Math.abs(diff).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+                else if (fmt === 'pct') str = `${sign}${Math.abs(diff).toFixed(1)}%`;
+                else str = `${sign}${diff}`;
+                return <span className={`font-mono font-semibold text-[11px] ${cls}`}>{str}</span>;
+              }
+
+              function WowRow({ label, curr, prior, lower, deltaFmt }) {
+                return (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[11px] text-muted shrink-0">{label}</span>
+                    <div className="flex items-center gap-3 font-mono text-[11px]">
+                      <span className="text-muted">{prior ?? '—'}</span>
+                      <span className="text-border">→</span>
+                      <span className="text-text font-semibold">{curr ?? '—'}</span>
+                      <DeltaVal curr={typeof curr === 'string' ? parseFloat(curr) : curr} prior={typeof prior === 'string' ? parseFloat(prior) : prior} lower={lower} fmt={deltaFmt ?? 'num'} />
+                    </div>
+                  </div>
+                );
+              }
+
+              const timedHandle = sfChats.filter(c => c.durationSecs != null && c.durationSecs > 0);
+              const timedWait   = sfChats.filter(c => c.waitSecs      != null && c.waitSecs   > 0);
+              const avgHandle   = timedHandle.length ? timedHandle.reduce((s, c) => s + c.durationSecs, 0) / timedHandle.length : null;
+              const avgWait     = timedWait.length   ? timedWait.reduce((s, c)   => s + c.waitSecs,   0)  / timedWait.length   : null;
+
+              return (
+                <div className="flex gap-4">
+
+                  {/* Salesforce */}
+                  <div className="flex-1 min-w-0 rounded-xl p-3 bg-[#5b8af5]/5 border border-[#5b8af5]/20">
+                    <div className="text-[10px] text-[#5b8af5] font-mono uppercase tracking-[1px] font-semibold mb-1">Salesforce</div>
+                    <div className="divide-y divide-border/40">
+                      <WowRow label="Closed Cases" curr={closedPeriod}                    prior={priorPeriod?.closedCases}  lower={false} />
+                      <WowRow label="MRR Added"    curr={mrrTotal}                        prior={priorPeriod?.mrrTotal}     lower={false} deltaFmt="usd" />
+                      <WowRow label="Avg Response" curr={`${avgResponseHrs.toFixed(1)}h`} prior={priorPeriod?.avgResponseHrs != null ? `${priorPeriod.avgResponseHrs.toFixed(1)}h` : null} lower={true} deltaFmt="pct" />
+                    </div>
+                  </div>
+
+                  {/* Talkdesk */}
+                  <div className="flex-1 min-w-0 rounded-xl p-3 bg-[#f5a623]/5 border border-[#f5a623]/20">
+                    <div className="text-[10px] text-[#f5a623] font-mono uppercase tracking-[1px] font-semibold mb-1">Talkdesk</div>
+                    <div className="divide-y divide-border/40">
+                      <WowRow label="Total Calls"     curr={tdStats?.callCount ?? 0}                                                   prior={priorPeriod?.tdCallCount}                                                    lower={false} />
+                      <WowRow label="Avg Talk Time"   curr={fmtSecs(tdStats?.avgTalkSecs)}                                             prior={fmtSecs(priorPeriod?.tdAvgTalkSecs)}                                         lower={false} deltaFmt="secs" />
+                      <WowRow label="Avg Hold Time"   curr={fmtSecs(tdStats?.avgHoldSecs)}                                             prior={fmtSecs(priorPeriod?.tdAvgHoldSecs)}                                         lower={true}  deltaFmt="secs" />
+                      <WowRow label="Avg CSAT"        curr={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : null}              prior={priorPeriod?.tdAvgCsat != null ? priorPeriod.tdAvgCsat.toFixed(1) : null}    lower={false} deltaFmt="pct" />
+                      <WowRow label="Productive Time" curr={fmtDuration(productivity?.totalSecs)}                                      prior={fmtDuration(priorPeriod?.tdProductivitySecs)}                                lower={false} deltaFmt="dur" />
+                    </div>
+                  </div>
+
+                  {/* Chat */}
+                  <div className="flex-1 min-w-0 rounded-xl p-3 bg-[#38d9a9]/5 border border-[#38d9a9]/20">
+                    <div className="text-[10px] text-[#38d9a9] font-mono uppercase tracking-[1px] font-semibold mb-1">Chat</div>
+                    <div className="divide-y divide-border/40">
+                      <WowRow label="Total Chats"     curr={sfChats.length}              prior={priorPeriod?.chatCount}                        lower={false} />
+                      <WowRow label="Avg Handle"      curr={fmtSecs(avgHandle)}           prior={fmtSecs(priorPeriod?.chatAvgHandleSecs)}       lower={false} deltaFmt="secs" />
+                      <WowRow label="Avg Wait"         curr={fmtSecs(avgWait)}             prior={fmtSecs(priorPeriod?.chatAvgWaitSecs)}         lower={true}  deltaFmt="secs" />
+                      <WowRow label="Productive Time" curr={fmtDuration(chatProductivitySecs)} prior={fmtDuration(priorPeriod?.chatProductivitySecs)} lower={false} deltaFmt="dur" />
+                    </div>
+                  </div>
+
+                  {/* LevelAI */}
+                  <div className="flex-1 min-w-0 rounded-xl p-3 bg-[#a855f7]/5 border border-[#a855f7]/20">
+                    <div className="text-[10px] text-[#a855f7] font-mono uppercase tracking-[1px] font-semibold mb-1">LevelAI</div>
+                    <div className="divide-y divide-border/40">
+                      <WowRow
+                        label="Instascore"
+                        curr={instaData?.overall != null ? `${instaData.overall}%` : null}
+                        prior={priorPeriod?.instascore != null ? `${priorPeriod.instascore}%` : null}
+                        lower={false}
+                        deltaFmt="pct"
+                      />
+                    </div>
+                  </div>
+
+                </div>
+              );
+            })()}
+          </CardBody>
+        </Card>
+      )}
 
       {/* Productivity breakdown */}
       {productivity && (
@@ -1171,29 +1273,6 @@ export function RepDetail() {
           </Card>
         );
       })()}
-
-      {/* WoW card */}
-      <Card className="mb-4">
-        <div className="px-4 py-3 border-b border-border">
-          <div className="text-xs font-semibold text-text">WoW — Closed Cases</div>
-        </div>
-        <CardBody>
-          <div className="flex gap-6">
-            <div>
-              <div className="text-[11px] text-muted mb-1">{periodLabel}</div>
-              <div className="text-2xl font-bold font-mono text-text">{closedPeriod}</div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted mb-1">{hasPrior ? priorLabel : '—'}</div>
-              <div className="text-2xl font-bold font-mono text-text">{hasPrior ? closedPriorPeriod : '—'}</div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted mb-1">Change</div>
-              <div className={`text-2xl font-bold font-mono ${wowCls}`}>{wowStr}</div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
 
       {/* MRR Upgrades table */}
       <Card className="mb-4">

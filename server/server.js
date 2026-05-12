@@ -189,6 +189,21 @@ function sessionDateFilter(period, startDate, endDate) {
   }
 }
 
+function priorSessionClause(period) {
+  const c = priorCallsClause(period);
+  return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(m.createddate)') : null;
+}
+
+function priorStatusClause(period) {
+  const c = priorCallsClause(period);
+  return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(dsu.status_start_at)') : null;
+}
+
+function priorInstaClause(period) {
+  const c = priorCallsClause(period);
+  return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(asr.CREATED)') : null;
+}
+
 function computeProductivity(statusRows, channelType) {
   const byStatus = {};
   for (const row of statusRows ?? []) {
@@ -526,6 +541,81 @@ app.get("/api/rep-detail", async (req, res) => {
        GROUP BY status`
     ).catch(() => []);
 
+    // Prior period — all groups (only when a natural comparison period exists)
+    const priorPeriodPromise = hasPrior ? (() => {
+      const priorCallsFilter = priorCallsClause(period);
+      const priorSessFilter  = priorSessionClause(period);
+      const priorStatFilter  = priorStatusClause(period);
+      const priorInstaFilter = priorInstaClause(period);
+      return Promise.all([
+        // [0] Prior Talkdesk stats
+        query(`SELECT COUNT(*) AS call_count,
+                      COUNT(CASE WHEN t.csat_score IS NOT NULL THEN 1 END) AS csat_count,
+                      AVG(CAST(t.talk_time AS DOUBLE)) AS avg_talk,
+                      AVG(CAST(t.holding_time AS DOUBLE)) AS avg_hold,
+                      AVG(CAST(t.csat_score AS DOUBLE)) AS avg_csat
+               FROM ${TD} t
+               JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
+               WHERE cu.id = '${ownerId}' AND ${priorCallsFilter}`).catch(() => []),
+        // [1] Prior Talkdesk productivity
+        query(`SELECT status, AVG(daily_secs) AS avg_secs
+               FROM (
+                 SELECT DATE(dsu.status_start_at) AS day, dsu.status,
+                        SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS daily_secs
+                 FROM ${TD_STATUS} dsu
+                 WHERE LOWER(dsu.user_name) = (
+                   SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+                 ) AND ${priorStatFilter}
+                 GROUP BY DATE(dsu.status_start_at), dsu.status
+               ) sub
+               GROUP BY status`).catch(() => []),
+        // [2] Prior Chat stats
+        query(`SELECT COUNT(*) AS chat_count,
+                      AVG(CASE WHEN m.accepttime IS NOT NULL AND m.endtime IS NOT NULL
+                               THEN DATEDIFF(SECOND, m.accepttime, m.endtime) END) AS avg_handle,
+                      AVG(CASE WHEN m.accepttime IS NOT NULL
+                               THEN DATEDIFF(SECOND, m.createddate, m.accepttime) END) AS avg_wait
+               FROM ${SRC_MESSAGING} m
+               WHERE m.ownerid = '${ownerId}'
+                 AND m.is_current = 'true'
+                 AND m.channelname != 'Marketing Site Messaging'
+                 AND ${priorSessFilter}`).catch(() => []),
+        // [3] Prior Chat productivity
+        query(`SELECT AVG(daily_secs) AS avg_secs
+               FROM (
+                 SELECT DATE(m.createddate) AS day,
+                        SUM(DATEDIFF(SECOND, m.accepttime, m.endtime)) AS daily_secs
+                 FROM ${SRC_MESSAGING} m
+                 WHERE m.ownerid = '${ownerId}'
+                   AND m.is_current = 'true'
+                   AND m.channelname != 'Marketing Site Messaging'
+                   AND m.accepttime IS NOT NULL AND m.endtime IS NOT NULL
+                   AND ${priorSessFilter}
+                 GROUP BY DATE(m.createddate)
+               ) sub`).catch(() => []),
+        // [4] Prior avg response time (closed cases)
+        query(`SELECT AVG(CAST(case_response_time_hours__c AS DOUBLE)) AS avg_hrs
+               FROM ${CASE}
+               WHERE is_current = true AND isclosed = 'true'
+                 AND ${priorClause} AND case_response_time_hours__c IS NOT NULL ${owId}`).catch(() => []),
+        // [5] Prior Instascore categories
+        query(`SELECT ins.CATEGORY, AVG(CAST(ins.CATEGORY_SCORE_PCNT AS DOUBLE)) AS avg_pct
+               FROM (
+                 SELECT * FROM ${LAI_SCORE}
+                 WHERE RUBRIC_TITLE = 'Unstoppable Call Experience (IS)'
+                 QUALIFY ROW_NUMBER() OVER (PARTITION BY ASR_LOG_ID, CATEGORY, QUESTION ORDER BY UPDATED DESC) = 1
+               ) ins
+               JOIN ${LAI_ASR}  asr ON asr.ID  = ins.ASR_LOG_ID
+               JOIN ${LAI_USER} u   ON u.ID    = asr.USER_ID
+               JOIN ${USER}     sf  ON LOWER(sf.email) = LOWER(u.EMAIL)
+               WHERE sf.id = '${ownerId}'
+                 AND sf.is_current = true
+                 AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
+                 AND ${priorInstaFilter}
+               GROUP BY ins.CATEGORY`).catch(() => []),
+      ]);
+    })() : Promise.resolve(null);
+
     // Chat productivity: avg daily time spent actively handling chats (accepttime → endtime)
     const chatProdPromise = query(
       `SELECT AVG(daily_secs) AS avg_secs
@@ -543,8 +633,8 @@ app.get("/api/rep-detail", async (req, res) => {
        ) sub`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, priorRow, mrrPriorRow], statusRows, chatProdRows] =
-      await Promise.all([Promise.all(queries), prodPromise, chatProdPromise]);
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
+      await Promise.all([Promise.all(queries), prodPromise, chatProdPromise, priorPeriodPromise]);
 
 
     const mrrUpgrades = (mrrRows ?? []).map(r => ({
@@ -590,6 +680,27 @@ app.get("/api/rep-detail", async (req, res) => {
       })),
       productivity: computeProductivity(statusRows, channelType),
       chatProductivitySecs: chatProdRows?.[0]?.avg_secs != null ? Number(chatProdRows[0].avg_secs) : null,
+      priorPeriod: hasPrior && priorPeriodData ? (() => {
+        const [priorTd, priorStat, priorChat, priorChatProd, priorAvgResp, priorInsta] = priorPeriodData;
+        return {
+          closedCases:        hasPrior ? Number(priorRow?.[0]?.cnt ?? 0) : null,
+          mrrTotal:           mrrPriorTotal,
+          tdCallCount:        Number(priorTd?.[0]?.call_count   ?? 0),
+          tdCsatCount:        Number(priorTd?.[0]?.csat_count   ?? 0),
+          tdAvgTalkSecs:      priorTd?.[0]?.avg_talk  != null ? Number(priorTd[0].avg_talk)  : null,
+          tdAvgHoldSecs:      priorTd?.[0]?.avg_hold  != null ? Number(priorTd[0].avg_hold)  : null,
+          tdAvgCsat:          priorTd?.[0]?.avg_csat  != null ? Number(priorTd[0].avg_csat)  : null,
+          tdProductivitySecs: computeProductivity(priorStat ?? [], channelType).totalSecs,
+          chatCount:          Number(priorChat?.[0]?.chat_count ?? 0),
+          chatAvgHandleSecs:  priorChat?.[0]?.avg_handle != null ? Number(priorChat[0].avg_handle) : null,
+          chatAvgWaitSecs:    priorChat?.[0]?.avg_wait   != null ? Number(priorChat[0].avg_wait)   : null,
+          chatProductivitySecs: priorChatProd?.[0]?.avg_secs  != null ? Number(priorChatProd[0].avg_secs)  : null,
+          avgResponseHrs:       priorAvgResp?.[0]?.avg_hrs   != null ? Number(priorAvgResp[0].avg_hrs)    : null,
+          instascore: weightedInstascore(
+            (priorInsta ?? []).map(r => ({ category: r.CATEGORY, score: Number(r.avg_pct ?? 0) }))
+          ),
+        };
+      })() : null,
       sfChats: (sfChatRows ?? []).map(r => ({
         sessionId:        r.session_id,
         startTime:        r.chat_start_time,

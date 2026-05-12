@@ -641,7 +641,6 @@ export function RepDetail() {
               {[
                 { label: 'Avg Talk Time',       val: fmtSecs(tdStats?.avgTalkSecs) },
                 { label: 'Avg Hold Time',       val: fmtSecs(tdStats?.avgHoldSecs) },
-                { label: 'Avg CSAT',            val: tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—' },
                 { label: 'Avg Productive Time', val: fmtDuration(productivity?.totalSecs) },
               ].map(({ label, val }) => (
                 <div key={label} className="flex items-center justify-between py-2">
@@ -649,6 +648,17 @@ export function RepDetail() {
                   <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : val}</span>
                 </div>
               ))}
+              <div className="flex items-center justify-between py-2">
+                <span className="text-[11px] text-muted">Avg CSAT</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted font-mono">
+                    {detailLoading ? '' : tdStats?.callCount > 0 ? `${tdStats.csatCount ?? 0}/${tdStats.callCount}` : ''}
+                  </span>
+                  <span className="text-sm font-bold font-mono text-text">
+                    {detailLoading ? '…' : tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : '—'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

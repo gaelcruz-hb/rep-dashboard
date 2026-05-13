@@ -1416,16 +1416,16 @@ export function RepDetail() {
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  {['Start Time', 'Duration', 'Wait', 'Issue Type', 'Company Age', 'Paying'].map(h => (
+                  {['Start Time', 'Duration', 'Wait', 'Customer Email', 'Ticket ID', 'Issue Type', 'Company Age', 'Paying', ''].map(h => (
                     <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {detailLoading ? (
-                  <tr><td colSpan={6} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading chats…</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading chats…</td></tr>
                 ) : sfChats.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-center text-muted text-xs font-mono">No chats in this period</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-6 text-center text-muted text-xs font-mono">No chats in this period</td></tr>
                 ) : sfChats.map((c, i) => (
                   <tr key={c.sessionId ?? i} className="hover:bg-surface2 transition-colors">
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
@@ -1437,6 +1437,12 @@ export function RepDetail() {
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
                       {fmtSecs(c.waitSecs)}
                     </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {c.customerEmail ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {c.ticketId ?? '—'}
+                    </td>
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
                       {c.issueType ?? '—'}
                     </td>
@@ -1445,6 +1451,16 @@ export function RepDetail() {
                     </td>
                     <td className={`px-3 py-2.5 text-xs border-b border-border/50 font-mono whitespace-nowrap ${c.paying === 1 ? 'text-success' : 'text-muted'}`}>
                       {c.paying === 1 ? 'Yes' : c.paying === 0 ? 'No' : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      {c.sessionId && (
+                        <a
+                          href={`https://joinhomebase.lightning.force.com/lightning/r/MessagingSession/${c.sessionId}/view`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent hover:underline font-mono text-[10px]"
+                        >View ↗</a>
+                      )}
                     </td>
                   </tr>
                 ))}

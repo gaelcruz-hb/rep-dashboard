@@ -648,7 +648,8 @@ app.get("/api/rep-detail", async (req, res) => {
                     m.endtime AS chat_end_time,
                     DATEDIFF(SECOND, m.createddate, m.endtime) AS duration_seconds,
                     DATEDIFF(SECOND, m.createddate, m.accepttime) AS wait_seconds,
-                    t.company_id, t.ticket_issue_type, t.company_age_bucket, t.paying
+                    m.email__c AS customer_email,
+                    t.ticket_id, t.company_id, t.ticket_issue_type, t.company_age_bucket, t.paying
              FROM ${SRC_MESSAGING} m
              LEFT JOIN ${CS_TICKETS} t
                ON t.ticket_id = m.id AND t.ticket_type = 'Chat' AND t.ticket_system = 'Salesforce'
@@ -855,13 +856,22 @@ app.get("/api/rep-detail", async (req, res) => {
           ),
         };
       })() : null,
-      sfChats: (sfChatRows ?? []).map(r => ({
+      sfChats: (() => {
+        const seen = new Set();
+        return (sfChatRows ?? []).filter(r => {
+          if (seen.has(r.session_id)) return false;
+          seen.add(r.session_id);
+          return true;
+        });
+      })().map(r => ({
         sessionId:        r.session_id,
         startTime:        r.chat_start_time,
         acceptTime:       r.agent_accept_time,
         endTime:          r.chat_end_time,
         durationSecs:     r.duration_seconds != null ? Number(r.duration_seconds) : null,
         waitSecs:         r.wait_seconds     != null ? Number(r.wait_seconds)     : null,
+        customerEmail:    r.customer_email ?? null,
+        ticketId:         r.ticket_id ?? null,
         companyId:        r.company_id ?? null,
         issueType:        r.ticket_issue_type ?? null,
         companyAgeBucket: r.company_age_bucket ?? null,
@@ -1475,6 +1485,15 @@ if (isDev) {
 // ── GET /api/diagnostics ───────────────────────────────────────────────────────
 app.get('/api/diagnostics', (_req, res) => {
   res.json(getDiagnostics());
+});
+
+app.get('/api/diagnostics/messaging-schema', async (_req, res) => {
+  try {
+    const rows = await query(`SELECT * FROM ${SRC_MESSAGING} LIMIT 1`);
+    res.json({ columns: rows.length ? Object.keys(rows[0]) : [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/diagnostics/mrr-name', async (req, res) => {

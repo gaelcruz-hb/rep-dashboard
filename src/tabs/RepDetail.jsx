@@ -202,6 +202,7 @@ export function RepDetail() {
   const [mrrExpanded, setMrrExpanded]           = useState(false);
   const [tdCallsExpanded, setTdCallsExpanded]   = useState(false);
   const [sfChatsExpanded, setSfChatsExpanded]   = useState(false);
+  const [emailsExpanded, setEmailsExpanded]     = useState(false);
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
@@ -345,6 +346,8 @@ export function RepDetail() {
   const chatProductivitySecs = detail?.chatProductivitySecs ?? null;
   const priorPeriod          = detail?.priorPeriod          ?? null;
   const productivity      = detail?.productivity       ?? null;
+  const emailStats        = detail?.emailStats          ?? { sentCount: 0 };
+  const emails            = detail?.emails              ?? [];
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -570,7 +573,7 @@ export function RepDetail() {
       </div>
 
       {/* KPI cards — grouped by source */}
-      <div className="mb-4 flex gap-3 items-start">
+      <div className="mb-4 flex gap-3 items-stretch">
 
         {/* Salesforce */}
         <div className="flex-1 min-w-0 bg-surface border border-[#5b8af5]/30 rounded-xl overflow-hidden">
@@ -649,6 +652,20 @@ export function RepDetail() {
                   <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : val}</span>
                 </div>
               ))}
+              {(() => {
+                const expSecs = productivity?.expectedSecs ?? (8 * 3600);
+                const callProdSecs = (productivity?.availSecs ?? 0) + (productivity?.onCallSecs ?? 0);
+                const callPct = expSecs > 0 ? (callProdSecs / expSecs) * 100 : 0;
+                const cls = callPct >= 75 ? 'text-success' : callPct >= 50 ? 'text-warn' : 'text-danger';
+                return (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[11px] text-muted">Call Productivity</span>
+                    <span className={`text-sm font-bold font-mono ${callProdSecs > 0 ? cls : 'text-muted'}`}>
+                      {detailLoading ? '…' : (callProdSecs > 0 ? `${callPct.toFixed(1)}%` : '—')}
+                    </span>
+                  </div>
+                );
+              })()}
               <div className="flex items-center justify-between py-2">
                 <span className="text-[11px] text-muted">Avg CSAT</span>
                 <div className="flex items-center gap-2">
@@ -690,47 +707,145 @@ export function RepDetail() {
                       <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : val}</span>
                     </div>
                   ))}
+                  {(() => {
+                    const expSecs = productivity?.expectedSecs ?? (8 * 3600);
+                    const chatSecs = chatProductivitySecs ?? 0;
+                    const chatPct = expSecs > 0 ? (chatSecs / expSecs) * 100 : 0;
+                    const cls = chatPct >= 75 ? 'text-success' : chatPct >= 50 ? 'text-warn' : 'text-danger';
+                    return (
+                      <div className="flex items-center justify-between py-2">
+                        <span className="text-[11px] text-muted">Chat Productivity</span>
+                        <span className={`text-sm font-bold font-mono ${chatSecs > 0 ? cls : 'text-muted'}`}>
+                          {detailLoading ? '…' : (chatSecs > 0 ? `${chatPct.toFixed(1)}%` : '—')}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
           </div>
         </div>
 
-        {/* LevelAI */}
-        <div className="flex-1 min-w-0 bg-surface border border-[#a855f7]/30 rounded-xl overflow-hidden">
-          <div className="h-[3px] bg-[#a855f7]" />
+        {/* Emails */}
+        <div className="flex-1 min-w-0 bg-surface border border-[#e05c5c]/30 rounded-xl overflow-hidden">
+          <div className="h-[3px] bg-[#e05c5c]" />
           <div className="px-4 py-3">
-            <div className="text-[10px] text-[#a855f7] font-mono uppercase tracking-[1px] font-semibold mb-1">LevelAI</div>
-            <div className="flex items-baseline gap-2 mb-2">
+            <div className="text-[10px] text-[#e05c5c] font-mono uppercase tracking-[1px] font-semibold mb-1">Emails</div>
+            <div className="flex items-baseline gap-2 mb-3">
               <span className="text-2xl font-bold font-mono text-text leading-none">
-                {instaLoading ? '…' : instaData?.overall != null ? `${instaData.overall}%` : '—'}
+                {detailLoading ? '…' : emailStats.sentCount}
               </span>
-              {instaData?.overall != null && (
-                <span className={`text-sm font-mono font-semibold ${instaData.overall >= goals.instascore ? 'text-success' : 'text-danger'}`}>
-                  {instaData.overall >= goals.instascore ? '✓' : '✗'}
-                </span>
-              )}
+              <span className="text-[11px] text-muted font-mono">sent</span>
             </div>
-            {instaData?.overall != null && (
-              <div className="mb-3">
-                <div className="w-full h-1.5 bg-border rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${instaData.overall >= goals.instascore ? 'bg-success' : 'bg-danger'}`}
-                    style={{ width: `${Math.min(100, (instaData.overall / goals.instascore) * 100)}%` }}
-                  />
+            {(() => {
+              const withCase = emails.filter(e => e.caseId).length;
+              const orphan   = emails.length - withCase;
+              const priorCnt = priorPeriod?.emailSentCount ?? null;
+              const delta    = priorCnt != null ? emailStats.sentCount - priorCnt : null;
+              const deltaColor = delta == null ? 'text-muted' : delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-muted';
+              const deltaStr   = delta == null ? null : `${delta > 0 ? '+' : ''}${delta} vs ${priorLabel}`;
+              return (
+                <div className="divide-y divide-border/40">
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[11px] text-muted">With Case</span>
+                    <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : withCase}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[11px] text-muted">No Case Link</span>
+                    <span className="text-sm font-bold font-mono text-text">{detailLoading ? '…' : orphan}</span>
+                  </div>
+                  {deltaStr && (
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-[11px] text-muted">WoW</span>
+                      <span className={`text-xs font-bold font-mono ${deltaColor}`}>{detailLoading ? '…' : deltaStr}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="text-[9px] text-muted font-mono mt-1">Goal: {goals.instascore}%</div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* LevelAI + Productivity column */}
+        <div className="flex-1 min-w-0 flex flex-col gap-3">
+          {/* LevelAI */}
+          <div className="bg-surface border border-[#a855f7]/30 rounded-xl overflow-hidden">
+            <div className="h-[3px] bg-[#a855f7]" />
+            <div className="px-4 py-3">
+              <div className="text-[10px] text-[#a855f7] font-mono uppercase tracking-[1px] font-semibold mb-1">LevelAI</div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-2xl font-bold font-mono text-text leading-none">
+                  {instaLoading ? '…' : instaData?.overall != null ? `${instaData.overall}%` : '—'}
+                </span>
+                {instaData?.overall != null && (
+                  <span className={`text-sm font-mono font-semibold ${instaData.overall >= goals.instascore ? 'text-success' : 'text-danger'}`}>
+                    {instaData.overall >= goals.instascore ? '✓' : '✗'}
+                  </span>
+                )}
               </div>
-            )}
-            <div className="divide-y divide-border/40">
-              {instaData?.conversationCount > 0 && (
-                <div className="flex items-center justify-between py-2">
-                  <span className="text-[11px] text-muted">Conversations Scored</span>
-                  <span className="text-sm font-bold font-mono text-text">{instaData.conversationCount}</span>
+              {instaData?.overall != null && (
+                <div className="mb-3">
+                  <div className="w-full h-1.5 bg-border rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${instaData.overall >= goals.instascore ? 'bg-success' : 'bg-danger'}`}
+                      style={{ width: `${Math.min(100, (instaData.overall / goals.instascore) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="text-[9px] text-muted font-mono mt-1">Goal: {goals.instascore}%</div>
                 </div>
               )}
+              <div className="divide-y divide-border/40">
+                {instaData?.conversationCount > 0 && (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-[11px] text-muted">Conversations Scored</span>
+                    <span className="text-sm font-bold font-mono text-text">{instaData.conversationCount}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Productivity */}
+          {productivity && (() => {
+            const pct       = productivity.productivityPct ?? 0;
+            const priorPct  = priorPeriod?.productivityPct ?? null;
+            const delta     = priorPct != null ? pct - priorPct : null;
+            const variant   = pct >= 75 ? 'success' : pct >= 50 ? 'warn' : 'danger';
+            const stripeBg  = variant === 'success' ? '#38d9a9' : variant === 'warn' ? '#f5a623' : '#e05c5c';
+            const stripeBorder = variant === 'success' ? 'border-success/30' : variant === 'warn' ? 'border-warn/30' : 'border-danger/30';
+            const barColor  = variant === 'success' ? 'bg-success' : variant === 'warn' ? 'bg-warn' : 'bg-danger';
+            const textColor = variant === 'success' ? 'text-success' : variant === 'warn' ? 'text-warn' : 'text-danger';
+            const deltaColor = delta == null ? 'text-muted' : delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-muted';
+            const deltaStr   = delta == null ? null : `${delta > 0 ? '▲' : delta < 0 ? '▼' : ''} ${Math.abs(delta).toFixed(1)}%`;
+            return (
+              <div className={`bg-surface border ${stripeBorder} rounded-xl overflow-hidden`}>
+                <div className="h-[3px]" style={{ backgroundColor: stripeBg }} />
+                <div className="px-4 py-3">
+                  <div className={`text-[10px] font-mono uppercase tracking-[1px] font-semibold mb-1 ${textColor}`}>Productivity</div>
+                  <div className="flex items-baseline gap-2 mb-2">
+                    <span className="text-2xl font-bold font-mono text-text leading-none">
+                      {detailLoading ? '…' : `${pct.toFixed(1)}%`}
+                    </span>
+                    {!detailLoading && deltaStr && (
+                      <span className={`text-xs font-mono font-semibold ${deltaColor}`}>{deltaStr}</span>
+                    )}
+                  </div>
+                  <div className="mb-2">
+                    <div className="w-full h-1.5 bg-border rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${barColor} transition-all duration-500`} style={{ width: `${Math.min(100, pct)}%` }} />
+                    </div>
+                    <div className="text-[9px] text-muted font-mono mt-1">
+                      {fmtDuration(productivity.totalSecs)} / {fmtDuration(productivity.expectedSecs)} per day
+                    </div>
+                  </div>
+                  <div className={`text-[10px] font-mono ${textColor}`}>
+                    {variant === 'success' ? '✓ On track (≥ 75%)' : variant === 'warn' ? '◐ Below target (50–75%)' : '✗ Off track (< 50%)'}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
       </div>
@@ -760,15 +875,17 @@ export function RepDetail() {
                 return <span className={`font-mono font-semibold text-[11px] ${cls}`}>{str}</span>;
               }
 
-              function WowRow({ label, curr, prior, lower, deltaFmt }) {
+              function WowRow({ label, curr, prior, currNum, priorNum, lower, deltaFmt }) {
+                const deltacurr  = currNum  != null ? currNum  : (typeof curr  === 'string' ? parseFloat(curr)  : curr);
+                const deltaprior = priorNum != null ? priorNum : (typeof prior === 'string' ? parseFloat(prior) : prior);
                 return (
                   <div className="flex items-center justify-between py-2">
                     <span className="text-[11px] text-muted shrink-0">{label}</span>
                     <div className="flex items-center gap-3 font-mono text-[11px]">
                       <span className="text-muted">{prior ?? '—'}</span>
-                      <span className="text-border">→</span>
+                      <span className="text-white">→</span>
                       <span className="text-text font-semibold">{curr ?? '—'}</span>
-                      <DeltaVal curr={typeof curr === 'string' ? parseFloat(curr) : curr} prior={typeof prior === 'string' ? parseFloat(prior) : prior} lower={lower} fmt={deltaFmt ?? 'num'} />
+                      <DeltaVal curr={deltacurr} prior={deltaprior} lower={lower} fmt={deltaFmt ?? 'num'} />
                     </div>
                   </div>
                 );
@@ -787,8 +904,9 @@ export function RepDetail() {
                     <div className="text-[10px] text-[#5b8af5] font-mono uppercase tracking-[1px] font-semibold mb-1">Salesforce</div>
                     <div className="divide-y divide-border/40">
                       <WowRow label="Closed Cases" curr={closedPeriod}                    prior={priorPeriod?.closedCases}  lower={false} />
-                      <WowRow label="MRR Added"    curr={mrrTotal}                        prior={priorPeriod?.mrrTotal}     lower={false} deltaFmt="usd" />
+                      <WowRow label="MRR Added"    curr={`$${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} prior={priorPeriod?.mrrTotal != null ? `$${priorPeriod.mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : null} currNum={mrrTotal} priorNum={priorPeriod?.mrrTotal ?? null} lower={false} deltaFmt="usd" />
                       <WowRow label="Avg Response" curr={`${avgResponseHrs.toFixed(1)}h`} prior={priorPeriod?.avgResponseHrs != null ? `${priorPeriod.avgResponseHrs.toFixed(1)}h` : null} lower={true} deltaFmt="pct" />
+                      <WowRow label="Emails Sent"  curr={emailStats.sentCount}            prior={priorPeriod?.emailSentCount} lower={false} />
                     </div>
                   </div>
 
@@ -801,6 +919,15 @@ export function RepDetail() {
                       <WowRow label="Avg Hold Time"   curr={fmtSecs(tdStats?.avgHoldSecs)}                                             prior={fmtSecs(priorPeriod?.tdAvgHoldSecs)}                                         lower={true}  deltaFmt="secs" />
                       <WowRow label="Avg CSAT"        curr={tdStats?.avgCsat != null ? tdStats.avgCsat.toFixed(1) : null}              prior={priorPeriod?.tdAvgCsat != null ? priorPeriod.tdAvgCsat.toFixed(1) : null}    lower={false} deltaFmt="pct" />
                       <WowRow label="Productive Time" curr={fmtDuration(productivity?.totalSecs)}                                      prior={fmtDuration(priorPeriod?.tdProductivitySecs)}                                lower={false} deltaFmt="dur" />
+                      <WowRow
+                        label="Productivity %"
+                        curr={productivity?.productivityPct != null ? `${productivity.productivityPct.toFixed(1)}%` : null}
+                        prior={priorPeriod?.productivityPct != null ? `${priorPeriod.productivityPct.toFixed(1)}%` : null}
+                        currNum={productivity?.productivityPct ?? null}
+                        priorNum={priorPeriod?.productivityPct ?? null}
+                        lower={false}
+                        deltaFmt="pct"
+                      />
                     </div>
                   </div>
 
@@ -877,6 +1004,12 @@ export function RepDetail() {
                     <tr className="border-t border-border">
                       <td className="pt-2 pb-1 font-semibold text-text">Avg / Day</td>
                       <td className="pt-2 pb-1 text-right font-semibold text-accent">{fmtDuration(productivity.totalSecs)}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 text-muted">vs Expected ({fmtDuration(productivity.expectedSecs)})</td>
+                      <td className={`py-1 text-right font-semibold ${productivity.productivityPct >= 75 ? 'text-success' : productivity.productivityPct >= 50 ? 'text-warn' : 'text-danger'}`}>
+                        {productivity.productivityPct.toFixed(1)}%
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -1461,6 +1594,66 @@ export function RepDetail() {
                           className="text-accent hover:underline font-mono text-[10px]"
                         >View ↗</a>
                       )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Emails */}
+      <Card className="mb-4">
+        <button
+          onClick={() => setEmailsExpanded(e => !e)}
+          className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
+        >
+          <span className="text-xs font-semibold text-text">Emails</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : emails.length} email{emails.length !== 1 ? 's' : ''}</span>
+            <span className="text-muted text-xs">{emailsExpanded ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {emailsExpanded && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['Sent', 'Subject', 'Case #', 'Case Subject'].map(h => (
+                    <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {detailLoading ? (
+                  <tr><td colSpan={4} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading emails…</td></tr>
+                ) : emails.length === 0 ? (
+                  <tr><td colSpan={4} className="px-3 py-6 text-center text-muted text-xs font-mono">No emails in this period</td></tr>
+                ) : emails.map((e, i) => (
+                  <tr key={e.id ?? i} className="hover:bg-surface2 transition-colors">
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
+                      {e.completedAt ? String(e.completedAt).slice(0, 16).replace('T', ' ') : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap" title={e.subject ?? ''}>
+                      {e.subject ?? '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      {e.caseId ? (
+                        <a
+                          href={`${SF_BASE}${e.caseId}/view`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-[11px] text-accent hover:underline"
+                        >
+                          {e.caseNumber ?? 'View ↗'}
+                        </a>
+                      ) : (
+                        <span className="text-muted font-mono text-[11px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 text-muted max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap" title={e.caseSubject ?? ''}>
+                      {e.caseSubject ?? '—'}
                     </td>
                   </tr>
                 ))}

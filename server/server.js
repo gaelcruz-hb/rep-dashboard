@@ -39,6 +39,7 @@ const TDCALLS        = 'stage_raw.talkdesk.calls';
 const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
 const CS_TICKETS     = 'prod_redshift_replica.bizops.cs_tickets_aggregated';
 const SRC_MESSAGING  = 'ext_crm.src_messaging_session';
+const SRC_TASK       = 'stage_raw.ext_crm.src_task';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -194,6 +195,28 @@ function priorSessionClause(period) {
   return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(m.createddate)') : null;
 }
 
+function taskCompletedDateFilter(period, startDate, endDate) {
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `DATE(t.CompletedDateTime) BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':     return `DATE(t.CompletedDateTime) = CURRENT_DATE()`;
+    case 'yesterday': return `DATE(t.CompletedDateTime) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'last_week':
+      return `DATE(t.CompletedDateTime) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(t.CompletedDateTime) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `DATE(t.CompletedDateTime) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(t.CompletedDateTime) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `DATE(t.CompletedDateTime) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(t.CompletedDateTime) < CURRENT_DATE()`;
+    default:
+      return `DATE(t.CompletedDateTime) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+  }
+}
+
+function priorTaskCompletedClause(period) {
+  const c = priorCallsClause(period);
+  return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(t.CompletedDateTime)') : null;
+}
+
 function priorStatusClause(period) {
   const c = priorCallsClause(period);
   return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(dsu.status_start_at)') : null;
@@ -203,6 +226,9 @@ function priorInstaClause(period) {
   const c = priorCallsClause(period);
   return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(asr.CREATED)') : null;
 }
+
+// 8h workday in seconds — denominator for productivity % since status rows are daily averages
+const EXPECTED_DAILY_SECS = 8 * 3600;
 
 function computeProductivity(statusRows, channelType) {
   const byStatus = {};
@@ -220,7 +246,9 @@ function computeProductivity(statusRows, channelType) {
   } else {
     totalSecs = availSecs + onCallSecs + chatSecs;
   }
-  return { availSecs, onCallSecs, chatSecs, totalSecs };
+  const expectedSecs = EXPECTED_DAILY_SECS;
+  const productivityPct = expectedSecs > 0 ? (totalSecs / expectedSecs) * 100 : 0;
+  return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct };
 }
 
 function ownerWhere({ ownerIds, ownerId } = {}) {
@@ -658,6 +686,28 @@ app.get("/api/rep-detail", async (req, res) => {
                AND m.channelname != 'Marketing Site Messaging'
                AND ${ticketsFilter}
              ORDER BY m.createddate DESC`),
+      // 10. Email count for current period
+      query(`SELECT COUNT(*) AS cnt
+             FROM ${SRC_TASK} t
+             WHERE t.OwnerId = '${ownerId}'
+               AND LOWER(t.TaskSubtype) = 'email'
+               AND t.IsDeleted = 'false'
+               AND t.Status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate)}`).catch(() => []),
+      // 11. Individual email rows (most recent 200) — LEFT JOIN to CASE so orphans survive
+      query(`SELECT t.Id, t.Subject, t.CompletedDateTime, t.Status,
+                    t.WhatId AS case_id,
+                    c.casenumber AS case_number,
+                    c.subject AS case_subject
+             FROM ${SRC_TASK} t
+             LEFT JOIN ${CASE} c ON c.id = t.WhatId AND c.is_current = true
+             WHERE t.OwnerId = '${ownerId}'
+               AND LOWER(t.TaskSubtype) = 'email'
+               AND t.IsDeleted = 'false'
+               AND t.Status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate)}
+             ORDER BY t.CompletedDateTime DESC
+             LIMIT 200`).catch(() => []),
     ];
 
     // 7. Prior period closed count — only when a comparison exists
@@ -702,6 +752,7 @@ app.get("/api/rep-detail", async (req, res) => {
       const priorSessFilter  = priorSessionClause(period);
       const priorStatFilter  = priorStatusClause(period);
       const priorInstaFilter = priorInstaClause(period);
+      const priorEmailFilter = priorTaskCompletedClause(period);
       return Promise.all([
         // [0] Prior Talkdesk stats
         query(`SELECT COUNT(*) AS call_count,
@@ -768,6 +819,14 @@ app.get("/api/rep-detail", async (req, res) => {
                  AND (asr.DELETED IS NULL OR asr.DELETED = 'false')
                  AND ${priorInstaFilter}
                GROUP BY ins.CATEGORY`).catch(() => []),
+        // [6] Prior email count
+        query(`SELECT COUNT(*) AS cnt
+               FROM ${SRC_TASK} t
+               WHERE t.OwnerId = '${ownerId}'
+                 AND LOWER(t.TaskSubtype) = 'email'
+                 AND t.IsDeleted = 'false'
+                 AND t.Status = 'Completed'
+                 AND ${priorEmailFilter}`).catch(() => []),
       ]);
     })() : Promise.resolve(null);
 
@@ -788,7 +847,7 @@ app.get("/api/rep-detail", async (req, res) => {
        ) sub`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, emailCountRow, emailRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
       await Promise.all([Promise.all(queries), prodPromise, chatProdPromise, priorPeriodPromise]);
 
 
@@ -836,7 +895,8 @@ app.get("/api/rep-detail", async (req, res) => {
       productivity: computeProductivity(statusRows, channelType),
       chatProductivitySecs: chatProdRows?.[0]?.avg_secs != null ? Number(chatProdRows[0].avg_secs) : null,
       priorPeriod: hasPrior && priorPeriodData ? (() => {
-        const [priorTd, priorStat, priorChat, priorChatProd, priorAvgResp, priorInsta] = priorPeriodData;
+        const [priorTd, priorStat, priorChat, priorChatProd, priorAvgResp, priorInsta, priorEmail] = priorPeriodData;
+        const priorProd = computeProductivity(priorStat ?? [], channelType);
         return {
           closedCases:        hasPrior ? Number(priorRow?.[0]?.cnt ?? 0) : null,
           mrrTotal:           mrrPriorTotal,
@@ -845,7 +905,12 @@ app.get("/api/rep-detail", async (req, res) => {
           tdAvgTalkSecs:      priorTd?.[0]?.avg_talk  != null ? Number(priorTd[0].avg_talk)  : null,
           tdAvgHoldSecs:      priorTd?.[0]?.avg_hold  != null ? Number(priorTd[0].avg_hold)  : null,
           tdAvgCsat:          priorTd?.[0]?.avg_csat  != null ? Number(priorTd[0].avg_csat)  : null,
-          tdProductivitySecs: computeProductivity(priorStat ?? [], channelType).totalSecs,
+          tdProductivitySecs: priorProd.totalSecs,
+          productivityPct:    priorProd.productivityPct,
+          expectedSecs:       priorProd.expectedSecs,
+          availSecs:          priorProd.availSecs,
+          onCallSecs:         priorProd.onCallSecs,
+          chatSecsTd:         priorProd.chatSecs,
           chatCount:          Number(priorChat?.[0]?.chat_count ?? 0),
           chatAvgHandleSecs:  priorChat?.[0]?.avg_handle != null ? Number(priorChat[0].avg_handle) : null,
           chatAvgWaitSecs:    priorChat?.[0]?.avg_wait   != null ? Number(priorChat[0].avg_wait)   : null,
@@ -854,6 +919,7 @@ app.get("/api/rep-detail", async (req, res) => {
           instascore: weightedInstascore(
             (priorInsta ?? []).map(r => ({ category: r.CATEGORY, score: Number(r.avg_pct ?? 0) }))
           ),
+          emailSentCount:       Number(priorEmail?.[0]?.cnt ?? 0),
         };
       })() : null,
       sfChats: (() => {
@@ -876,6 +942,18 @@ app.get("/api/rep-detail", async (req, res) => {
         issueType:        r.ticket_issue_type ?? null,
         companyAgeBucket: r.company_age_bucket ?? null,
         paying:           r.paying != null ? Number(r.paying) : null,
+      })),
+      emailStats: {
+        sentCount: Number(emailCountRow?.[0]?.cnt ?? 0),
+      },
+      emails: (emailRows ?? []).map(r => ({
+        id:           r.Id,
+        subject:      r.Subject ?? null,
+        completedAt:  r.CompletedDateTime,
+        status:       r.Status,
+        caseId:       r.case_id ?? null,
+        caseNumber:   r.case_number ?? null,
+        caseSubject:  r.case_subject ?? null,
       })),
     });
   } catch (err) {

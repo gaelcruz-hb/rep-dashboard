@@ -13,7 +13,6 @@ import { useSlaData } from '../data/useSlaData';
 // import { useTalkdeskMetrics } from '../data/useTalkdeskMetrics';
 import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card';
 import { AvsgCard } from '../components/ui/AvsgCard';
-import { RepTable } from '../components/ui/RepTable';
 import { buildHourlyChartData, HOURLY_CHART_OPTS, fmtDuration } from '../data/productivityUtils';
 
 ChartJS.register(
@@ -47,23 +46,6 @@ function baseOpts(legendDisplay = false) {
       y: { ticks: TICK, grid: GRID },
     },
   };
-}
-
-// ── Status pill ───────────────────────────────────────────────────────────────
-function StatusPill({ dot, count, label, onClick, active }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] transition-colors cursor-pointer
-        ${active
-          ? 'bg-accent/20 border-accent'
-          : 'bg-surface2 border-border hover:border-accent/50'}`}
-    >
-      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dot }} />
-      <span className="font-bold font-mono text-sm text-text">{count.toLocaleString()}</span>
-      <span className="text-muted">{label}</span>
-    </button>
-  );
 }
 
 function LoadingCard({ h = 200 }) {
@@ -102,17 +84,6 @@ export function Overview() {
 
   const isFiltered = managerFilter !== 'all' || teamFilter !== 'all' || repFilter !== 'all';
 
-  const [activeStatus, setActiveStatus]        = useState(null);
-  const [caseNumberSearch, setCaseNumberSearch] = useState('');
-  const [activeAgent, setActiveAgent]           = useState('');
-
-  // Reset case filters when data scope changes
-  useMemo(() => {
-    setActiveStatus(null);
-    setCaseNumberSearch('');
-    setActiveAgent('');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodFilter, repFilter, managerFilter, teamFilter, customStartDate, customEndDate]);
 
   const dateProps = customRangeMode ? { startDate: customStartDate, endDate: customEndDate } : { period: periodFilter };
   const { data: rawData, loading, error } = useOverviewData({
@@ -158,34 +129,6 @@ export function Overview() {
     return { labels: DOW_LABELS, thisWeek, lastWeek };
   }, [slaRaw, goals.slaBreach, filteredRepNames]);
 
-  const caseRows = useMemo(() => {
-    const records = slaRaw?.records ?? [];
-    if (!filteredRepNames) return records;
-    return records.filter(c => filteredRepNames.has(c.Owner?.Name));
-  }, [slaRaw, filteredRepNames]);
-
-  const agentOptions = useMemo(() => {
-    const names = new Set(caseRows.map(c => c.Owner?.Name).filter(Boolean));
-    return [...names].sort();
-  }, [caseRows]);
-
-  const filteredCaseRows = useMemo(() => {
-    let rows = caseRows;
-    if (activeStatus === 'Closed') {
-      rows = rows.filter(c => c.IsClosed === true);
-    } else if (activeStatus) {
-      rows = rows.filter(c => c.Status === activeStatus);
-    }
-    if (caseNumberSearch.trim()) {
-      const q = caseNumberSearch.trim().toLowerCase();
-      rows = rows.filter(c => c.CaseNumber?.toLowerCase().includes(q));
-    }
-    if (activeAgent) {
-      rows = rows.filter(c => c.Owner?.Name === activeAgent);
-    }
-    return rows;
-  }, [caseRows, activeStatus, caseNumberSearch, activeAgent]);
-
   if (!loading && (error || !parsed)) {
     return (
       <div className="flex items-center justify-center h-48 text-muted text-xs font-mono">
@@ -200,10 +143,6 @@ export function Overview() {
         <SectionHeader title="Activity vs Goals — Today" />
         <div className="grid gap-3.5 mb-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
           {Array.from({ length: 6 }).map((_, i) => <LoadingCard key={i} h={90} />)}
-        </div>
-        <SectionHeader title="Case Status Snapshot" />
-        <div className="flex gap-2 flex-wrap mb-5">
-          {Array.from({ length: 5 }).map((_, i) => <LoadingCard key={i} h={40} />)}
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <LoadingCard h={200} /><LoadingCard h={200} />
@@ -262,12 +201,6 @@ export function Overview() {
     },
   };
 
-  // Derive pill counts from caseRows so they always match the table totals
-  const totalNew     = caseRows.filter(c => c.Status === 'New').length;
-  const totalOpen    = caseRows.filter(c => c.Status === 'Open').length;
-  const totalPending = caseRows.filter(c => c.Status === 'Pending' || c.Status === 'Waiting').length;
-  const totalHold    = caseRows.filter(c => c.Status === 'On Hold').length;
-  const totalClosed  = caseRows.filter(c => c.IsClosed === true).length;
 
   // ── Chart datasets ───────────────────────────────────────────────────────────
   const closedDailyData = {
@@ -398,78 +331,6 @@ export function Overview() {
           </div>
           <div className="text-[10px] text-muted mt-1">{loading ? '' : `${mrrUpgradeCount} upgrade${mrrUpgradeCount !== 1 ? 's' : ''}`}</div>
         </div>
-      </div>
-
-      {/* ── Case Status Snapshot ── */}
-      <SectionHeader title="Case Status Snapshot" />
-      <div className="flex gap-2 flex-wrap mb-3">
-        <button
-          onClick={() => setActiveStatus(null)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] transition-colors cursor-pointer
-            ${activeStatus === null
-              ? 'bg-accent/20 border-accent'
-              : 'bg-surface2 border-border hover:border-accent/50'}`}
-        >
-          <span className="font-bold font-mono text-sm text-text">{caseRows.length.toLocaleString()}</span>
-          <span className="text-muted">All Cases</span>
-        </button>
-        <StatusPill dot="#38d9a9" count={totalNew}     label="New"          onClick={() => setActiveStatus(activeStatus === 'New'     ? null : 'New')}     active={activeStatus === 'New'} />
-        <StatusPill dot="#7e3dd4" count={totalOpen}    label="Open"         onClick={() => setActiveStatus(activeStatus === 'Open'    ? null : 'Open')}    active={activeStatus === 'Open'} />
-        <StatusPill dot="#f5a623" count={totalPending} label="Pending"      onClick={() => setActiveStatus(activeStatus === 'Pending' ? null : 'Pending')} active={activeStatus === 'Pending'} />
-        <StatusPill dot="#e05c5c" count={totalHold}    label="On Hold"      onClick={() => setActiveStatus(activeStatus === 'On Hold' ? null : 'On Hold')} active={activeStatus === 'On Hold'} />
-        <StatusPill dot="#38d9a9" count={totalClosed}  label="Closed"       onClick={() => setActiveStatus(activeStatus === 'Closed'  ? null : 'Closed')}  active={activeStatus === 'Closed'} />
-      </div>
-
-      {/* ── Case list filters ── */}
-      <div className="flex gap-2 mb-2">
-        <input
-          type="text"
-          placeholder="Search case #…"
-          value={caseNumberSearch}
-          onChange={e => setCaseNumberSearch(e.target.value)}
-          className="bg-surface2 border border-border rounded-lg px-3 py-1.5 text-xs font-mono text-text placeholder-muted focus:outline-none focus:border-accent w-40"
-        />
-        <select
-          value={activeAgent}
-          onChange={e => setActiveAgent(e.target.value)}
-          className="bg-surface2 border border-border rounded-lg px-3 py-1.5 text-xs font-mono text-text focus:outline-none focus:border-accent"
-        >
-          <option value="">All Agents</option>
-          {agentOptions.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* ── Case list table ── */}
-      <div className="overflow-auto rounded-[10px] border border-border mb-5" style={{ maxHeight: 360 }}>
-        <RepTable
-          columns={[
-            {
-              key: 'CaseNumber', label: 'Case #',
-              render: (v, row) => (
-                <a
-                  href={`https://joinhomebase.lightning.force.com/lightning/r/Case/${row.Id}/view`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline font-mono"
-                >
-                  {v}
-                </a>
-              ),
-            },
-            { key: 'Owner',       label: 'Case Owner',  render: v => v?.Name ?? '—' },
-            { key: 'Subject',     label: 'Subject' },
-            { key: 'Description', label: 'Description', render: v => v ? (v.length > 50 ? v.slice(0, 50) + '…' : v) : '—' },
-            { key: 'Status',      label: 'Status' },
-            {
-              key: 'CreatedDate', label: 'Created',
-              render: v => v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
-              align: 'right',
-            },
-          ]}
-          rows={filteredCaseRows}
-        />
       </div>
 
       {/* ── Row 1 charts ── */}

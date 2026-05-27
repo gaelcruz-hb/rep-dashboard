@@ -1000,6 +1000,39 @@ app.get('/api/rep-productivity-hourly', async (req, res) => {
   }
 });
 
+// ── GET /api/rep-productivity-weekly ──────────────────────────────────────────
+app.get('/api/rep-productivity-weekly', async (req, res) => {
+  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  if (!ownerId || !SFID_RE.test(ownerId))
+    return res.status(400).json({ error: 'valid ownerId required' });
+
+  const sf = statusDateFilter(period, startDate, endDate);
+  try {
+    const rows = await query(
+      `SELECT DATE_FORMAT(DATE_TRUNC('WEEK', dsu.status_start_at), 'yyyy-MM-dd') AS week_start,
+              dsu.status,
+              SUM(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) AS total_secs
+       FROM ${TD_STATUS} dsu
+       WHERE LOWER(dsu.user_name) = (
+         SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+       ) AND ${sf}
+         AND LOWER(dsu.status) != 'offline'
+       GROUP BY DATE_TRUNC('WEEK', dsu.status_start_at), dsu.status
+       ORDER BY week_start, status`
+    );
+    res.json({
+      weekly: rows.map(r => ({
+        weekStart: r.week_start,
+        status:    r.status,
+        totalSecs: Number(r.total_secs ?? 0),
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [rep-productivity-weekly]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── GET /api/cases-data ────────────────────────────────────────────────────────
 app.get("/api/cases-data", async (req, res) => {
   const p = req.query;

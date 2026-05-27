@@ -6,23 +6,13 @@ import { useManagerData } from '../data/useManagerData';
 import { parseManagerData } from '../data/parseManagerData';
 import { useRepDetail } from '../data/useRepDetail';
 import { useProductivityHourly } from '../data/useProductivityHourly';
+import { useProductivityWeekly } from '../data/useProductivityWeekly';
 import { apiFetch } from '../data/apiFetch.js';
 import { Card, CardBody } from '../components/ui/Card';
-import { ORG } from '../data/orgData';
 import { getRepChannelType } from '../data/getRepChannelType';
-import { STATUS_COLORS, HOURLY_CHART_OPTS, buildHourlyChartData, fmtDuration } from '../data/productivityUtils';
+import { STATUS_COLORS, HOURLY_CHART_OPTS, WEEKLY_CHART_OPTS, buildHourlyChartData, buildWeeklyChartData, fmtDuration } from '../data/productivityUtils';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
-
-function findManagerForRep(repName) {
-  for (const { manager, teams } of ORG) {
-    for (const team of teams) {
-      const members = team.members.map(m => (typeof m === 'string' ? m : m.name));
-      if (members.includes(repName)) return manager;
-    }
-  }
-  return '—';
-}
 
 const SF_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Case/';
 
@@ -178,7 +168,7 @@ function ConfirmModal({ caseNum, isArchived, onConfirm, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export function RepDetail() {
-  const { selectedRep, setSelectedRep, repFilter, goals, periodFilter, customRangeMode, customStartDate, customEndDate, repList: sfRepList } = useDashboard();
+  const { selectedRep, repFilter, goals, periodFilter, customRangeMode, customStartDate, customEndDate, repList: sfRepList } = useDashboard();
   const [caseFilter, setCaseFilter]   = useState('all');
   const [sortCol, setSortCol]         = useState('ageDays');
   const [sortDir, setSortDir]         = useState('desc');
@@ -206,6 +196,15 @@ export function RepDetail() {
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
+  const [subTab, setSubTab]                     = useState('overview');
+
+  const SUB_TABS = [
+    { id: 'overview',     label: 'Overview' },
+    { id: 'productivity', label: 'Productivity' },
+    { id: 'quality',      label: 'Quality' },
+    { id: 'activity',     label: 'Activity' },
+    { id: 'cases',        label: 'Cases' },
+  ];
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -237,6 +236,11 @@ export function RepDetail() {
   const repId = repNotInSF ? null : (sfRep?.id ?? rep?.id);
   const channelType = getRepChannelType(sfRep?.name ?? rep?.name ?? activeRep ?? '');
   const { data: hourlyData, loading: hourlyLoading } = useProductivityHourly(
+    repId, periodFilter,
+    customRangeMode ? customStartDate : undefined,
+    customRangeMode ? customEndDate   : undefined,
+  );
+  const { data: weeklyData, loading: weeklyLoading } = useProductivityWeekly(
     repId, periodFilter,
     customRangeMode ? customStartDate : undefined,
     customRangeMode ? customEndDate   : undefined,
@@ -541,37 +545,37 @@ export function RepDetail() {
         />
       )}
 
-      {/* Rep selector */}
-      <div className="flex items-center gap-2 mb-4">
-        <div className="text-[10px] text-muted font-mono uppercase tracking-[1px]">Select Rep</div>
-        <select
-          value={activeRep ?? rep?.name ?? ''}
-          onChange={e => setSelectedRep(e.target.value)}
-          className="bg-surface2 border border-border text-text px-2.5 py-1.5 rounded-md text-xs outline-none focus:border-accent transition-colors cursor-pointer"
-        >
-          {sfRepList.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-        </select>
+      {/* Sub-tab strip */}
+      <div className="mb-4 border-b border-border flex items-center gap-0 overflow-x-auto">
+        {SUB_TABS.map(tab => {
+          const isActive = subTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setSubTab(tab.id)}
+              className={`
+                px-4 py-3 text-xs font-medium whitespace-nowrap border-b-2 transition-all cursor-pointer bg-transparent
+                ${isActive ? 'text-accent border-accent' : 'text-muted border-transparent hover:text-text'}
+              `}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+        {(detailLoading || instaLoading) && (
+          <svg className="animate-spin w-4 h-4 text-accent shrink-0 ml-3" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+        )}
         {repNotInSF && (
-          <span className="text-[10px] text-warn font-mono">
+          <span className="text-[10px] text-warn font-mono ml-3">
             "{activeRep}" not found in Salesforce — check name spelling
           </span>
         )}
       </div>
 
-      {/* Rep name + team/manager header */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2">
-          <div className="text-[18px] font-bold text-text">{sfRep?.name ?? rep?.name ?? activeRep}</div>
-          {(detailLoading || instaLoading) && (
-            <svg className="animate-spin w-4 h-4 text-accent shrink-0" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-            </svg>
-          )}
-        </div>
-        <div className="text-xs text-muted">{rep?.team ?? '—'} · Manager: {findManagerForRep(sfRep?.name ?? rep?.name ?? activeRep)}</div>
-      </div>
-
+      {subTab === 'overview' && (<>
       {/* KPI cards — grouped by source */}
       <div className="mb-4 flex gap-3 items-stretch">
 
@@ -962,7 +966,9 @@ export function RepDetail() {
           </CardBody>
         </Card>
       )}
+      </>)}
 
+      {subTab === 'productivity' && (<>
       {/* Productivity breakdown */}
       {productivity && (
         <Card className="mb-4">
@@ -1044,6 +1050,33 @@ export function RepDetail() {
         );
       })()}
 
+      {/* Productivity by Week chart */}
+      {(() => {
+        const chartData = buildWeeklyChartData(weeklyData?.weekly);
+        if (!chartData && !weeklyLoading) return null;
+        return (
+          <Card className="mb-4">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="text-xs font-semibold text-text">Productivity by Week</span>
+              <span className="text-[10px] text-muted font-mono capitalize">{channelType} rep · total hours · {periodLabel}</span>
+            </div>
+            <div className="p-4">
+              {weeklyLoading ? (
+                <div className="h-48 flex items-center justify-center text-muted text-xs font-mono animate-pulse">Loading…</div>
+              ) : chartData ? (
+                <div style={{ height: 220 }}>
+                  <Bar data={chartData} options={WEEKLY_CHART_OPTS} />
+                </div>
+              ) : (
+                <div className="h-24 flex items-center justify-center text-muted text-xs font-mono">No status data for this period</div>
+              )}
+            </div>
+          </Card>
+        );
+      })()}
+      </>)}
+
+      {subTab === 'quality' && (<>
       {/* Instascore rubric heatmap */}
       {instaData?.byRubric?.length > 0 && (() => {
         function heatColor(pct) {
@@ -1406,7 +1439,9 @@ export function RepDetail() {
           </Card>
         );
       })()}
+      </>)}
 
+      {subTab === 'activity' && (<>
       {/* MRR Upgrades table */}
       <Card className="mb-4">
         <button
@@ -1663,6 +1698,9 @@ export function RepDetail() {
         )}
       </Card>
 
+      </>)}
+
+      {subTab === 'cases' && (<>
       {/* Cases card */}
       <Card>
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -1748,6 +1786,7 @@ export function RepDetail() {
           </table>
         </div>
       </Card>
+      </>)}
     </div>
   );
 }

@@ -55,6 +55,51 @@ export function buildHourlyChartData(hourly) {
   };
 }
 
+export const WEEKLY_CHART_OPTS = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: {
+    legend: { display: true, labels: { color: '#6b7280', font: { size: 10 }, boxWidth: 10, boxHeight: 10 } },
+    tooltip: {
+      backgroundColor: '#1e2333', titleColor: '#e8eaf0', bodyColor: '#6b7280',
+      borderColor: '#2a2f42', borderWidth: 1,
+      callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw}h` },
+    },
+  },
+  scales: {
+    x: { stacked: true, grid: { color: '#2a2f42' }, ticks: { color: '#6b7280', font: { size: 10 } } },
+    y: { stacked: true, grid: { color: '#2a2f42' }, ticks: { color: '#6b7280', font: { size: 10 }, callback: v => `${v}h` } },
+  },
+};
+
+export function buildWeeklyChartData(weekly) {
+  if (!weekly?.length) return null;
+  const weeks    = [...new Set(weekly.map(r => r.weekStart))].sort();
+  const statuses = [...new Set(weekly.map(r => r.status))];
+  const lookup   = {};
+  for (const r of weekly) {
+    if (!lookup[r.weekStart]) lookup[r.weekStart] = {};
+    lookup[r.weekStart][r.status] = r.totalSecs;
+  }
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmtWeek = ws => {
+    const [y, m, d] = ws.split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, d));
+    const end   = new Date(Date.UTC(y, m - 1, d + 6));
+    const sm = MONTHS[start.getUTCMonth()], sd = start.getUTCDate();
+    const em = MONTHS[end.getUTCMonth()],   ed = end.getUTCDate();
+    return sm === em ? `${sm} ${sd} – ${ed}` : `${sm} ${sd} – ${em} ${ed}`;
+  };
+  return {
+    labels:   weeks.map(fmtWeek),
+    datasets: statuses.map(s => ({
+      label:           s.trim().replace(/\b\w/g, c => c.toUpperCase()),
+      data:            weeks.map(w => Math.round((lookup[w]?.[s] ?? 0) / 3600)),
+      backgroundColor: STATUS_COLORS[s] ?? '#2a2f42',
+      borderWidth:     0,
+    })),
+  };
+}
+
 export function fmtDuration(s) {
   if (!s || s <= 0) return '—';
   const h = Math.floor(s / 3600);

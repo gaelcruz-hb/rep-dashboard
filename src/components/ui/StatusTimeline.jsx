@@ -20,8 +20,12 @@ function DaySection({ day, rows, defaultExpanded = false }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   // Per-status totals for the bar + legend, ordered by time spent.
+  // Clock-out segments (offline > 8h) are excluded so they don't dominate the view.
   const totals = {};
-  for (const r of rows) totals[r.status] = (totals[r.status] ?? 0) + r.durationSecs;
+  for (const r of rows) {
+    if (r.clockedOut) continue;
+    totals[r.status] = (totals[r.status] ?? 0) + r.durationSecs;
+  }
   const dayTotal = Object.values(totals).reduce((a, b) => a + b, 0);
   const byStatus = Object.entries(totals).sort((a, b) => b[1] - a[1]);
 
@@ -73,10 +77,14 @@ function DaySection({ day, rows, defaultExpanded = false }) {
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="text-xs font-mono border-b border-border/50 last:border-0 hover:bg-surface2 transition-colors">
-                  <td className="py-2"><StatusPill status={r.status} /></td>
-                  <td className="py-2 text-text">{r.startLocal}</td>
-                  <td className="py-2 text-text">{r.endLocal}</td>
-                  <td className="py-2 text-right text-text">{fmtDurationSec(r.durationSecs)}</td>
+                  <td className="py-2">
+                    {r.clockedOut
+                      ? <span className="text-muted italic text-[11px]">Clocked out</span>
+                      : <StatusPill status={r.status} />}
+                  </td>
+                  <td className={`py-2 ${r.clockedOut ? 'text-muted' : 'text-text'}`}>{r.startLocal}</td>
+                  <td className={`py-2 ${r.clockedOut ? 'text-muted' : 'text-text'}`}>{r.endLocal}</td>
+                  <td className={`py-2 text-right ${r.clockedOut ? 'text-muted' : 'text-text'}`}>{fmtDurationSec(r.durationSecs)}</td>
                 </tr>
               ))}
             </tbody>
@@ -86,6 +94,20 @@ function DaySection({ day, rows, defaultExpanded = false }) {
     </Card>
   );
 }
+
+// A day with no on-the-clock activity (only offline / clock-out) → the rep wasn't in.
+function NotInOfficeCard({ day }) {
+  return (
+    <Card className="mb-4">
+      <div className="px-4 py-3 flex items-center justify-between gap-4">
+        <span className="text-xs font-semibold text-muted">{fmtDayLabel(day)}</span>
+        <span className="text-[11px] font-mono text-muted italic">Not in Office</span>
+      </div>
+    </Card>
+  );
+}
+
+const isOffline = s => String(s ?? '').trim().toLowerCase() === 'offline';
 
 export function StatusTimeline({ instances, loading }) {
   if (loading) {
@@ -103,13 +125,26 @@ export function StatusTimeline({ instances, loading }) {
     );
   }
 
-  // Group by day, preserving the API's chronological order.
-  const days = [];
+  // Group by day, then order newest-first (rows within each day stay chronological).
   const byDay = {};
   for (const inst of instances) {
-    if (!byDay[inst.day]) { byDay[inst.day] = []; days.push(inst.day); }
+    if (!byDay[inst.day]) byDay[inst.day] = [];
     byDay[inst.day].push(inst);
   }
+  const days = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
 
-  return <>{days.map((day, i) => <DaySection key={day} day={day} rows={byDay[day]} defaultExpanded={i === 0} />)}</>;
+  // Expand the most recent day that actually has office activity.
+  const firstActive = days.find(day => byDay[day].some(r => !isOffline(r.status)));
+
+  return (
+    <>
+      {days.map(day => {
+        const rows = byDay[day];
+        const inOffice = rows.some(r => !isOffline(r.status));
+        return inOffice
+          ? <DaySection key={day} day={day} rows={rows} defaultExpanded={day === firstActive} />
+          : <NotInOfficeCard key={day} day={day} />;
+      })}
+    </>
+  );
 }

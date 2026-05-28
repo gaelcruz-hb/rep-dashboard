@@ -251,6 +251,12 @@ function priorInstaClause(period) {
 // 8h workday in seconds — denominator for productivity % since status rows are daily averages
 const EXPECTED_DAILY_SECS = 8 * 3600;
 
+// A single 'offline' segment longer than 8h = the rep clocked out for the day/weekend.
+// Such segments are excluded from on-clock aggregations so they don't drag productivity.
+const CLOCKOUT_THRESHOLD_SECS = 8 * 3600;
+const NOT_CLOCKOUT = `NOT (LOWER(dsu.status) = 'offline' AND ` +
+  `(UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at)) > ${CLOCKOUT_THRESHOLD_SECS})`;
+
 function computeProductivity(statusRows, channelType) {
   const byStatus = {};
   for (const row of statusRows ?? []) {
@@ -269,10 +275,15 @@ function computeProductivity(statusRows, channelType) {
   }
   const expectedSecs = EXPECTED_DAILY_SECS;
   const productivityPct = expectedSecs > 0 ? (totalSecs / expectedSecs) * 100 : 0;
+  // statusRows already exclude clock-out segments (offline > 8h), so clocked-in =
+  // all on-clock status time. On-clock % = productive ÷ clocked-in.
+  const clockedInSecs = Object.values(byStatus).reduce((a, b) => a + b, 0);
+  const onClockPct = clockedInSecs > 0 ? (totalSecs / clockedInSecs) * 100 : 0;
   const statusBreakdown = (statusRows ?? [])
     .map(r => ({ status: r.status, avgSecs: Number(r.avg_secs ?? 0) }))
     .sort((a, b) => b.avgSecs - a.avgSecs);
-  return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct, byStatus: statusBreakdown };
+  return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct,
+           clockedInSecs, onClockPct, byStatus: statusBreakdown };
 }
 
 function ownerWhere({ ownerIds, ownerId } = {}) {
@@ -799,6 +810,7 @@ app.get("/api/rep-detail", async (req, res) => {
          WHERE LOWER(dsu.user_name) = (
            SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
          ) AND ${statusFilter}
+           AND ${NOT_CLOCKOUT}
          GROUP BY DATE(dsu.status_start_at), dsu.status
        ) sub
        GROUP BY status`
@@ -830,6 +842,7 @@ app.get("/api/rep-detail", async (req, res) => {
                  WHERE LOWER(dsu.user_name) = (
                    SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
                  ) AND ${priorStatFilter}
+                   AND ${NOT_CLOCKOUT}
                  GROUP BY DATE(dsu.status_start_at), dsu.status
                ) sub
                GROUP BY status`).catch(() => []),
@@ -1135,6 +1148,8 @@ app.get('/api/rep-status-instances', async (req, res) => {
         startLocal:   r.start_local,
         endLocal:     r.end_local,
         durationSecs: Number(r.duration_secs ?? 0),
+        clockedOut:   String(r.status ?? '').trim().toLowerCase() === 'offline'
+                      && Number(r.duration_secs ?? 0) > CLOCKOUT_THRESHOLD_SECS,
       })),
     });
   } catch (err) {

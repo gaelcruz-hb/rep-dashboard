@@ -7,14 +7,17 @@ import { parseManagerData } from '../data/parseManagerData';
 import { useRepDetail } from '../data/useRepDetail';
 import { useProductivityHourly } from '../data/useProductivityHourly';
 import { useProductivityWeekly } from '../data/useProductivityWeekly';
+import { useStatusInstances } from '../data/useStatusInstances';
 import { apiFetch } from '../data/apiFetch.js';
 import { Card, CardBody } from '../components/ui/Card';
+import { StatusTimeline } from '../components/ui/StatusTimeline';
 import { getRepChannelType } from '../data/getRepChannelType';
-import { STATUS_COLORS, HOURLY_CHART_OPTS, WEEKLY_CHART_OPTS, buildHourlyChartData, buildWeeklyChartData, fmtDuration } from '../data/productivityUtils';
+import { STATUS_COLORS, HOURLY_CHART_OPTS, WEEKLY_CHART_OPTS, buildHourlyChartData, buildWeeklyChartData, fmtDuration, statusColor } from '../data/productivityUtils';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const SF_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Case/';
+const SF_TASK_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Task/';
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
 function RepKpiCard({ label, value, unit = '', goal, goalUnit = '', lower = false, note = null }) {
@@ -108,6 +111,21 @@ function StatusBadge({ status }) {
   );
 }
 
+function TaskTypeBadge({ subtype }) {
+  const key = (subtype ?? '').toLowerCase();
+  const cls = {
+    email:     'bg-accent/15 text-accent',
+    listemail: 'bg-accent/15 text-accent',
+    call:      'bg-success/15 text-success',
+    task:      'bg-warn/15 text-warn',
+  }[key] ?? 'bg-border text-muted';
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium font-mono ${cls}`}>
+      {subtype ?? '—'}
+    </span>
+  );
+}
+
 function LoadingRow() {
   return (
     <tr>
@@ -192,7 +210,8 @@ export function RepDetail() {
   const [mrrExpanded, setMrrExpanded]           = useState(false);
   const [tdCallsExpanded, setTdCallsExpanded]   = useState(false);
   const [sfChatsExpanded, setSfChatsExpanded]   = useState(false);
-  const [emailsExpanded, setEmailsExpanded]     = useState(false);
+  const [tasksExpanded, setTasksExpanded]       = useState(false);
+  const [expandedTaskId, setExpandedTaskId]     = useState(null);
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
@@ -241,6 +260,11 @@ export function RepDetail() {
     customRangeMode ? customEndDate   : undefined,
   );
   const { data: weeklyData, loading: weeklyLoading } = useProductivityWeekly(
+    repId, periodFilter,
+    customRangeMode ? customStartDate : undefined,
+    customRangeMode ? customEndDate   : undefined,
+  );
+  const { data: statusData, loading: statusLoading } = useStatusInstances(
     repId, periodFilter,
     customRangeMode ? customStartDate : undefined,
     customRangeMode ? customEndDate   : undefined,
@@ -352,6 +376,8 @@ export function RepDetail() {
   const productivity      = detail?.productivity       ?? null;
   const emailStats        = detail?.emailStats          ?? { sentCount: 0 };
   const emails            = detail?.emails              ?? [];
+  const taskStats         = detail?.taskStats           ?? { totalCount: 0 };
+  const tasks             = detail?.tasks               ?? [];
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -984,29 +1010,22 @@ export function RepDetail() {
           </button>
           {prodExpanded && (
             <div className="px-4 py-3">
-              {productivity.totalSecs === 0 ? (
+              {!productivity.byStatus?.length ? (
                 <div className="text-[11px] text-muted italic">No productivity data for this period</div>
               ) : (
                 <table className="w-full text-xs font-mono">
                   <tbody>
-                    {(channelType === 'calls' || channelType === 'mixed') && (
-                      <>
-                        <tr>
-                          <td className="py-1.5 text-muted">Available</td>
-                          <td className="py-1.5 text-right text-text">{fmtDuration(productivity.availSecs)}</td>
-                        </tr>
-                        <tr>
-                          <td className="py-1.5 text-muted">On a Call</td>
-                          <td className="py-1.5 text-right text-text">{fmtDuration(productivity.onCallSecs)}</td>
-                        </tr>
-                      </>
-                    )}
-                    {(channelType === 'chats' || channelType === 'mixed') && (
-                      <tr>
-                        <td className="py-1.5 text-muted">Chat</td>
-                        <td className="py-1.5 text-right text-text">{fmtDuration(productivity.chatSecs)}</td>
+                    {productivity.byStatus.map(({ status, avgSecs }) => (
+                      <tr key={status}>
+                        <td className="py-1.5 text-muted">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: statusColor(status) }} />
+                            <span className="capitalize">{status}</span>
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-right text-text">{fmtDuration(avgSecs)}</td>
                       </tr>
-                    )}
+                    ))}
                     <tr className="border-t border-border">
                       <td className="pt-2 pb-1 font-semibold text-text">Avg / Day</td>
                       <td className="pt-2 pb-1 text-right font-semibold text-accent">{fmtDuration(productivity.totalSecs)}</td>
@@ -1074,6 +1093,13 @@ export function RepDetail() {
           </Card>
         );
       })()}
+
+      {/* Status instances — per-day Talkdesk status timeline */}
+      <div className="flex items-center justify-between mb-3 mt-1">
+        <span className="text-xs font-semibold text-text">Status Instances</span>
+        <span className="text-[10px] text-muted font-mono capitalize">{channelType} rep · all statuses · {periodLabel}</span>
+      </div>
+      <StatusTimeline instances={statusData?.instances} loading={statusLoading} />
       </>)}
 
       {subTab === 'quality' && (<>
@@ -1459,16 +1485,16 @@ export function RepDetail() {
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  {['Date', 'Company', 'Location', 'Most Recent Upgrade', 'From → To', 'MRR $', ''].map(h => (
+                  {['Date', 'Company', 'Location', 'Most Recent Upgrade', 'From → To', 'Call', 'MRR $', ''].map(h => (
                     <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {detailLoading ? (
-                  <tr><td colSpan={7} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading upgrades…</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading upgrades…</td></tr>
                 ) : mrrUpgrades.length === 0 ? (
-                  <tr><td colSpan={7} className="px-3 py-6 text-center text-muted text-xs font-mono">No upgrades in this period</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-6 text-center text-muted text-xs font-mono">No upgrades in this period</td></tr>
                 ) : mrrUpgrades.map((u, i) => (
                   <tr key={i} className="hover:bg-surface2 transition-colors">
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
@@ -1483,6 +1509,11 @@ export function RepDetail() {
                       <span className="text-muted">{u.startTier ?? '—'}</span>
                       <span className="mx-1.5 text-border">→</span>
                       <span className="text-accent font-medium">{u.endTier ?? '—'}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
+                      {u.callRecordingLink && u.callRecordingLink !== 'None'
+                        ? <a href={u.callRecordingLink} target="_blank" rel="noreferrer" className="text-accent hover:underline font-mono text-[10px]">▶ Play</a>
+                        : <span className="text-muted font-mono text-[10px]">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-success whitespace-nowrap">
                       {u.netPriceChange ? `+$${Number(u.netPriceChange).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
@@ -1638,60 +1669,81 @@ export function RepDetail() {
         )}
       </Card>
 
-      {/* Emails */}
+      {/* Tasks & Emails */}
       <Card className="mb-4">
         <button
-          onClick={() => setEmailsExpanded(e => !e)}
+          onClick={() => setTasksExpanded(e => !e)}
           className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
         >
-          <span className="text-xs font-semibold text-text">Emails</span>
+          <span className="text-xs font-semibold text-text">Tasks & Emails</span>
           <div className="flex items-center gap-3">
-            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : emails.length} email{emails.length !== 1 ? 's' : ''}</span>
-            <span className="text-muted text-xs">{emailsExpanded ? '▲' : '▼'}</span>
+            <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : taskStats.totalCount} task{taskStats.totalCount !== 1 ? 's' : ''}</span>
+            <span className="text-muted text-xs">{tasksExpanded ? '▲' : '▼'}</span>
           </div>
         </button>
-        {emailsExpanded && (
+        {tasksExpanded && (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  {['Sent', 'Subject', 'Case #', 'Case Subject'].map(h => (
+                  {['Completed', 'Type', 'Recipient', 'Subject', 'Message'].map(h => (
                     <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {detailLoading ? (
-                  <tr><td colSpan={4} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading emails…</td></tr>
-                ) : emails.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-6 text-center text-muted text-xs font-mono">No emails in this period</td></tr>
-                ) : emails.map((e, i) => (
-                  <tr key={e.id ?? i} className="hover:bg-surface2 transition-colors">
-                    <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
-                      {e.completedAt ? String(e.completedAt).slice(0, 16).replace('T', ' ') : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs border-b border-border/50 max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap" title={e.subject ?? ''}>
-                      {e.subject ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap">
-                      {e.caseId ? (
-                        <a
-                          href={`${SF_BASE}${e.caseId}/view`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="font-mono text-[11px] text-accent hover:underline"
-                        >
-                          {e.caseNumber ?? 'View ↗'}
-                        </a>
-                      ) : (
-                        <span className="text-muted font-mono text-[11px]">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs border-b border-border/50 text-muted max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap" title={e.caseSubject ?? ''}>
-                      {e.caseSubject ?? '—'}
-                    </td>
-                  </tr>
-                ))}
+                  <tr><td colSpan={5} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading tasks…</td></tr>
+                ) : tasks.length === 0 ? (
+                  <tr><td colSpan={5} className="px-3 py-6 text-center text-muted text-xs font-mono">No tasks in this period</td></tr>
+                ) : tasks.map((t, i) => {
+                  const isOpen = expandedTaskId === (t.id ?? i);
+                  return (
+                      <tr
+                        key={t.id ?? i}
+                        onClick={() => t.body && setExpandedTaskId(isOpen ? null : (t.id ?? i))}
+                        className={`hover:bg-surface2 transition-colors ${t.body ? 'cursor-pointer' : ''}`}
+                      >
+                        <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap align-top">
+                          {t.completedAt ? String(t.completedAt).slice(0, 16).replace('T', ' ') : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs border-b border-border/50 whitespace-nowrap align-top">
+                          <TaskTypeBadge subtype={t.subtype} />
+                        </td>
+                        <td className="px-3 py-2.5 text-xs border-b border-border/50 align-top max-w-[200px]">
+                          {t.recipientName || t.recipientEmail ? (
+                            <div className="overflow-hidden">
+                              {t.recipientName && <div className="text-ellipsis overflow-hidden whitespace-nowrap" title={t.recipientName}>{t.recipientName}</div>}
+                              {t.recipientEmail && <div className="text-[10px] text-muted font-mono text-ellipsis overflow-hidden whitespace-nowrap" title={t.recipientEmail}>{t.recipientEmail}</div>}
+                            </div>
+                          ) : <span className="text-muted">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs border-b border-border/50 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap align-top" title={t.subject ?? ''}>
+                          {t.id ? (
+                            <a
+                              href={`${SF_TASK_BASE}${t.id}/view`}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={ev => ev.stopPropagation()}
+                              className="text-accent hover:underline"
+                            >
+                              {t.subject ?? 'View ↗'}
+                            </a>
+                          ) : (t.subject ?? '—')}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs border-b border-border/50 text-muted max-w-[360px] align-top">
+                          {t.body ? (
+                            <div className="flex items-start gap-1.5">
+                              <span className="text-muted/60 text-[10px] mt-0.5">{isOpen ? '▲' : '▼'}</span>
+                              <span className={isOpen ? 'whitespace-pre-wrap break-words' : 'overflow-hidden text-ellipsis whitespace-nowrap block max-w-[330px]'}>
+                                {t.body}
+                              </span>
+                            </div>
+                          ) : <span className="text-muted">—</span>}
+                        </td>
+                      </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

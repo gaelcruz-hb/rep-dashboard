@@ -40,6 +40,7 @@ const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
 const CS_TICKETS     = 'prod_redshift_replica.bizops.cs_tickets_aggregated';
 const SRC_MESSAGING  = 'ext_crm.src_messaging_session';
 const SRC_TASK       = 'stage_raw.ext_crm.src_task';
+const CONTACT        = 'Prod_redshift_replica.bizops_staging.crm_contact';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
 const INSTASCORE_CATEGORY_WEIGHTS = {
@@ -173,6 +174,26 @@ function statusDateFilter(period, startDate, endDate) {
   }
 }
 
+// Same windows as statusDateFilter, but the day is resolved in US Central so it
+// matches the Central-time grouping used by the status-instances view.
+function statusLocalDateFilter(period, startDate, endDate) {
+  const day = `DATE(from_utc_timestamp(dsu.status_start_at, 'America/Chicago'))`;
+  if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
+    return `${day} BETWEEN '${startDate}' AND '${endDate}'`;
+  switch (period) {
+    case 'today':     return `${day} = CURRENT_DATE()`;
+    case 'yesterday': return `${day} = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'last_week':
+      return `${day} >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND ${day} < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+    case 'last_month':
+      return `${day} >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND ${day} < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+    case 'last_30':
+      return `${day} >= DATE_SUB(CURRENT_DATE(), 30) AND ${day} < CURRENT_DATE()`;
+    default:
+      return `${day} >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+  }
+}
+
 function sessionDateFilter(period, startDate, endDate) {
   if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
     return `DATE(m.createddate) BETWEEN '${startDate}' AND '${endDate}'`;
@@ -248,7 +269,10 @@ function computeProductivity(statusRows, channelType) {
   }
   const expectedSecs = EXPECTED_DAILY_SECS;
   const productivityPct = expectedSecs > 0 ? (totalSecs / expectedSecs) * 100 : 0;
-  return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct };
+  const statusBreakdown = (statusRows ?? [])
+    .map(r => ({ status: r.status, avgSecs: Number(r.avg_secs ?? 0) }))
+    .sort((a, b) => b.avgSecs - a.avgSecs);
+  return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct, byStatus: statusBreakdown };
 }
 
 function ownerWhere({ ownerIds, ownerId } = {}) {
@@ -658,17 +682,33 @@ app.get("/api/rep-detail", async (req, res) => {
              WHERE cu.id = '${ownerId}'
                AND ${callsFilter}
              ORDER BY t.start_time DESC`),
-      // 8. MRR upgrades for current period
-      query(`SELECT upg.marked_upgrade_id, upg.marked_month, upg.upgrade_at, upg.most_recent_upgrade, upg.company_id, upg.location_id,
-                    upg.start_tier, upg.end_tier, upg.net_price_change,
-                    COALESCE(loc.name, comp.name) AS location_name
-             FROM ${UPGRADES} upg
-             JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
-             LEFT JOIN ${LOCATIONS} loc ON CAST(loc.location_id AS STRING) = CAST(upg.location_id AS STRING)
-             LEFT JOIN ${COMPANIES} comp ON CAST(comp.company_id AS STRING) = CAST(upg.company_id AS STRING)
-             WHERE cu.id = '${ownerId}'
-               AND ${mrrFilter}
-             ORDER BY upg.marked_month DESC, upg.upgrade_at DESC`),
+      // 8. MRR upgrades for current period. Each upgrade is matched (best-effort)
+      //    to the call that drove it: same company + same rep + same day, picking
+      //    the latest call that started at/before the upgrade was marked.
+      query(`SELECT * FROM (
+               SELECT upg.marked_upgrade_id, upg.marked_month, upg.upgrade_at, upg.most_recent_upgrade,
+                      upg.company_id, upg.location_id, upg.start_tier, upg.end_tier, upg.net_price_change,
+                      COALESCE(loc.name, comp.name) AS location_name,
+                      td.recording_link AS call_recording_link,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY upg.marked_upgrade_id
+                        ORDER BY td.start_time DESC
+                      ) AS call_rn
+               FROM ${UPGRADES} upg
+               JOIN ${USER} cu ON (TRIM(LOWER(cu.name)) = TRIM(LOWER(upg.agent_name)) OR LOWER(upg.agent_name) LIKE TRIM(LOWER(cu.name)) || '%') AND cu.is_current = true
+               LEFT JOIN ${LOCATIONS} loc ON CAST(loc.location_id AS STRING) = CAST(upg.location_id AS STRING)
+               LEFT JOIN ${COMPANIES} comp ON CAST(comp.company_id AS STRING) = CAST(upg.company_id AS STRING)
+               LEFT JOIN ${TD} td
+                 ON CAST(td.company_id AS STRING) = CAST(upg.company_id AS STRING)
+                AND LOWER(td.user_email) = LOWER(cu.email)
+                AND DATE(td.start_time) = DATE(upg.marked_at)
+                AND td.start_time <= upg.marked_at
+                AND td.recording_link IS NOT NULL AND td.recording_link != 'None'
+               WHERE cu.id = '${ownerId}'
+                 AND ${mrrFilter}
+             ) ranked
+             WHERE call_rn = 1
+             ORDER BY marked_month DESC, upgrade_at DESC`),
       // 9. SF Chat sessions with timing data for current period
       query(`SELECT m.id AS session_id,
                     m.createddate AS chat_start_time,
@@ -703,6 +743,24 @@ app.get("/api/rep-detail", async (req, res) => {
              LEFT JOIN ${CASE} c ON c.id = t.WhatId AND c.is_current = true
              WHERE t.OwnerId = '${ownerId}'
                AND LOWER(t.TaskSubtype) = 'email'
+               AND t.IsDeleted = 'false'
+               AND t.Status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate)}
+             ORDER BY t.CompletedDateTime DESC
+             LIMIT 200`).catch(() => []),
+      // 12. All completed tasks count (emails, calls, to-dos, etc.) for the Activity table header
+      query(`SELECT COUNT(*) AS cnt
+             FROM ${SRC_TASK} t
+             WHERE t.OwnerId = '${ownerId}'
+               AND t.IsDeleted = 'false'
+               AND t.Status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate)}`).catch(() => []),
+      // 13. Individual task rows (most recent 200) — the actual task/email sent out, with recipient
+      query(`SELECT t.Id, t.Subject, t.Description, t.TaskSubtype, t.CompletedDateTime, t.Status,
+                    ct.name AS recipient_name, ct.email AS recipient_email
+             FROM ${SRC_TASK} t
+             LEFT JOIN ${CONTACT} ct ON ct.id = t.WhoId AND ct.is_current = true
+             WHERE t.OwnerId = '${ownerId}'
                AND t.IsDeleted = 'false'
                AND t.Status = 'Completed'
                AND ${taskCompletedDateFilter(period, startDate, endDate)}
@@ -847,7 +905,7 @@ app.get("/api/rep-detail", async (req, res) => {
        ) sub`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, emailCountRow, emailRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, emailCountRow, emailRows, taskCountRow, taskRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
       await Promise.all([Promise.all(queries), prodPromise, chatProdPromise, priorPeriodPromise]);
 
 
@@ -862,6 +920,7 @@ app.get("/api/rep-detail", async (req, res) => {
       startTier:         r.start_tier,
       endTier:           r.end_tier,
       netPriceChange:    Number(r.net_price_change ?? 0),
+      callRecordingLink: r.call_recording_link ?? null,
     }));
     const mrrTotal      = mrrUpgrades.reduce((s, u) => s + u.netPriceChange, 0);
     const mrrPriorTotal = mrrPriorFilter && mrrPriorRow ? (Number(mrrPriorRow[0]?.mrr_prior ?? 0) || null) : null;
@@ -955,6 +1014,19 @@ app.get("/api/rep-detail", async (req, res) => {
         caseNumber:   r.case_number ?? null,
         caseSubject:  r.case_subject ?? null,
       })),
+      taskStats: {
+        totalCount: Number(taskCountRow?.[0]?.cnt ?? 0),
+      },
+      tasks: (taskRows ?? []).map(r => ({
+        id:             r.Id,
+        subtype:        r.TaskSubtype ?? null,
+        subject:        r.Subject ?? null,
+        body:           r.Description ?? null,
+        recipientName:  r.recipient_name ?? null,
+        recipientEmail: r.recipient_email ?? null,
+        completedAt:    r.CompletedDateTime,
+        status:         r.Status,
+      })),
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);
@@ -1029,6 +1101,44 @@ app.get('/api/rep-productivity-weekly', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [rep-productivity-weekly]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── GET /api/rep-status-instances ─────────────────────────────────────────────
+// Every individual Talkdesk status segment for a rep over the period, with times
+// resolved to US Central so the UI can group them per day exactly like Talkdesk.
+app.get('/api/rep-status-instances', async (req, res) => {
+  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  if (!ownerId || !SFID_RE.test(ownerId))
+    return res.status(400).json({ error: 'valid ownerId required' });
+
+  const sf = statusLocalDateFilter(period, startDate, endDate);
+  try {
+    const rows = await query(
+      `SELECT DATE_FORMAT(from_utc_timestamp(dsu.status_start_at, 'America/Chicago'), 'yyyy-MM-dd') AS day,
+              dsu.status,
+              DATE_FORMAT(from_utc_timestamp(dsu.status_start_at, 'America/Chicago'), 'h:mm a')    AS start_local,
+              DATE_FORMAT(from_utc_timestamp(dsu.status_end_at,   'America/Chicago'), 'h:mm a')    AS end_local,
+              (UNIX_TIMESTAMP(dsu.status_end_at) - UNIX_TIMESTAMP(dsu.status_start_at))             AS duration_secs
+       FROM ${TD_STATUS} dsu
+       WHERE LOWER(dsu.user_name) = (
+         SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
+       ) AND ${sf}
+       ORDER BY dsu.status_start_at
+       LIMIT 5000`
+    );
+    res.json({
+      instances: rows.map(r => ({
+        day:          r.day,
+        status:       r.status,
+        startLocal:   r.start_local,
+        endLocal:     r.end_local,
+        durationSecs: Number(r.duration_secs ?? 0),
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [rep-status-instances]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -39,7 +39,6 @@ const TDCALLS        = 'stage_raw.talkdesk.calls';
 const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
 const CS_TICKETS     = 'prod_redshift_replica.bizops.cs_tickets_aggregated';
 const SRC_MESSAGING  = 'ext_crm.src_messaging_session';
-const SRC_TASK       = 'stage_raw.ext_crm.src_task';
 const CRM_TASK       = 'prod_enriched.crm.s_crm_task';
 const CONTACT        = 'Prod_redshift_replica.bizops_staging.crm_contact';
 
@@ -234,9 +233,9 @@ function taskCompletedDateFilter(period, startDate, endDate, col = 't.CompletedD
   }
 }
 
-function priorTaskCompletedClause(period) {
+function priorTaskCompletedClause(period, col = 't.CompletedDateTime') {
   const c = priorCallsClause(period);
-  return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(t.CompletedDateTime)') : null;
+  return c ? c.replace(/DATE\(t\.start_time\)/g, `DATE(${col})`) : null;
 }
 
 function priorStatusClause(period) {
@@ -746,25 +745,25 @@ app.get("/api/rep-detail", async (req, res) => {
              ORDER BY m.createddate DESC`),
       // 10. Email count for current period
       query(`SELECT COUNT(*) AS cnt
-             FROM ${SRC_TASK} t
-             WHERE t.OwnerId = '${ownerId}'
-               AND LOWER(t.TaskSubtype) = 'email'
-               AND t.IsDeleted = 'false'
-               AND t.Status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate)}`).catch(() => []),
+             FROM ${CRM_TASK} t
+             WHERE t.task_owner_id = '${ownerId}'
+               AND LOWER(t.task_subtype) = 'email'
+               AND t.is_deleted = false
+               AND t.task_status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}`).catch(() => []),
       // 11. Individual email rows (most recent 200) — LEFT JOIN to CASE so orphans survive
-      query(`SELECT t.Id, t.Subject, t.CompletedDateTime, t.Status,
-                    t.WhatId AS case_id,
+      query(`SELECT t.task_id AS Id, t.task_subject AS Subject, t.task_completed_at AS CompletedDateTime, t.task_status AS Status,
+                    t.task_what_id AS case_id,
                     c.casenumber AS case_number,
                     c.subject AS case_subject
-             FROM ${SRC_TASK} t
-             LEFT JOIN ${CASE} c ON c.id = t.WhatId AND c.is_current = true
-             WHERE t.OwnerId = '${ownerId}'
-               AND LOWER(t.TaskSubtype) = 'email'
-               AND t.IsDeleted = 'false'
-               AND t.Status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate)}
-             ORDER BY t.CompletedDateTime DESC
+             FROM ${CRM_TASK} t
+             LEFT JOIN ${CASE} c ON c.id = t.task_what_id AND c.is_current = true
+             WHERE t.task_owner_id = '${ownerId}'
+               AND LOWER(t.task_subtype) = 'email'
+               AND t.is_deleted = false
+               AND t.task_status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}
+             ORDER BY t.task_completed_at DESC
              LIMIT 200`).catch(() => []),
       // 12. All completed tasks count (emails, calls, to-dos, etc.) for the Activity table header
       query(`SELECT COUNT(*) AS cnt
@@ -830,7 +829,7 @@ app.get("/api/rep-detail", async (req, res) => {
       const priorSessFilter  = priorSessionClause(period);
       const priorStatFilter  = priorStatusClause(period);
       const priorInstaFilter = priorInstaClause(period);
-      const priorEmailFilter = priorTaskCompletedClause(period);
+      const priorEmailFilter = priorTaskCompletedClause(period, 't.task_completed_at');
       return Promise.all([
         // [0] Prior Talkdesk stats
         query(`SELECT COUNT(*) AS call_count,
@@ -900,11 +899,11 @@ app.get("/api/rep-detail", async (req, res) => {
                GROUP BY ins.CATEGORY`).catch(() => []),
         // [6] Prior email count
         query(`SELECT COUNT(*) AS cnt
-               FROM ${SRC_TASK} t
-               WHERE t.OwnerId = '${ownerId}'
-                 AND LOWER(t.TaskSubtype) = 'email'
-                 AND t.IsDeleted = 'false'
-                 AND t.Status = 'Completed'
+               FROM ${CRM_TASK} t
+               WHERE t.task_owner_id = '${ownerId}'
+                 AND LOWER(t.task_subtype) = 'email'
+                 AND t.is_deleted = false
+                 AND t.task_status = 'Completed'
                  AND ${priorEmailFilter}`).catch(() => []),
       ]);
     })() : Promise.resolve(null);

@@ -29,6 +29,11 @@ function DaySection({ day, rows, defaultExpanded = false }) {
   const dayTotal = Object.values(totals).reduce((a, b) => a + b, 0);
   const byStatus = Object.entries(totals).sort((a, b) => b[1] - a[1]);
 
+  // Total time logged into Talkdesk that day = any non-offline status (clock-out excluded).
+  const loggedInSecs = rows
+    .filter(r => !r.clockedOut && !isOffline(r.status))
+    .reduce((a, r) => a + r.durationSecs, 0);
+
   return (
     <Card className="mb-4">
       <button
@@ -40,6 +45,10 @@ function DaySection({ day, rows, defaultExpanded = false }) {
           <span className="text-xs font-semibold text-text">{fmtDayLabel(day)}</span>
         </span>
         <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[11px] font-mono text-text font-semibold">
+            Logged in {fmtDurationSec(loggedInSecs)}
+          </span>
+          <span className="text-border">·</span>
           {byStatus.map(([status, secs]) => (
             <span key={status} className="flex items-center gap-1.5 text-[11px] font-mono text-muted">
               <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: statusColor(status) }} />

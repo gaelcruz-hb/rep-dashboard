@@ -1027,16 +1027,26 @@ export function RepDetail() {
                       </tr>
                     ))}
                     <tr className="border-t border-border">
-                      <td className="pt-2 pb-1 text-muted">Clocked in / day</td>
-                      <td className="pt-2 pb-1 text-right text-text">{fmtDuration(productivity.clockedInSecs)}</td>
+                      <td className="pt-2 pb-1 text-muted">Logged into Talkdesk / day</td>
+                      <td className="pt-2 pb-1 text-right text-text">{fmtDuration(productivity.loggedInSecs)}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 text-muted">Clocked in / day</td>
+                      <td className="py-1 text-right text-text">{fmtDuration(productivity.clockedInSecs)}</td>
                     </tr>
                     <tr>
                       <td className="py-1 text-muted">Productive / day</td>
                       <td className="py-1 text-right text-text">{fmtDuration(productivity.totalSecs)}</td>
                     </tr>
                     <tr>
-                      <td className="py-1 font-semibold text-text">On-clock productive</td>
-                      <td className={`py-1 text-right font-semibold ${productivity.onClockPct >= 75 ? 'text-success' : productivity.onClockPct >= 50 ? 'text-warn' : 'text-danger'}`}>
+                      <td className="py-1 font-semibold text-text">Productive (of logged-in)</td>
+                      <td className={`py-1 text-right font-semibold ${productivity.loggedInPct >= 75 ? 'text-success' : productivity.loggedInPct >= 50 ? 'text-warn' : 'text-danger'}`}>
+                        {productivity.loggedInPct.toFixed(1)}%
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 text-muted">On-clock productive</td>
+                      <td className={`py-1 text-right ${productivity.onClockPct >= 75 ? 'text-success' : productivity.onClockPct >= 50 ? 'text-warn' : 'text-danger'}`}>
                         {productivity.onClockPct.toFixed(1)}%
                       </td>
                     </tr>

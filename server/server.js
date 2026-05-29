@@ -40,6 +40,7 @@ const TD_STATUS      = 'Prod_redshift_replica.talkdesk.dim_user_status';
 const CS_TICKETS     = 'prod_redshift_replica.bizops.cs_tickets_aggregated';
 const SRC_MESSAGING  = 'ext_crm.src_messaging_session';
 const SRC_TASK       = 'stage_raw.ext_crm.src_task';
+const CRM_TASK       = 'prod_enriched.crm.s_crm_task';
 const CONTACT        = 'Prod_redshift_replica.bizops_staging.crm_contact';
 
 // ── Instascore category weights (from LevelAI Rubric Settings) ─────────────────
@@ -216,20 +217,20 @@ function priorSessionClause(period) {
   return c ? c.replace(/DATE\(t\.start_time\)/g, 'DATE(m.createddate)') : null;
 }
 
-function taskCompletedDateFilter(period, startDate, endDate) {
+function taskCompletedDateFilter(period, startDate, endDate, col = 't.CompletedDateTime') {
   if (startDate && endDate && ISO_RE.test(startDate) && ISO_RE.test(endDate))
-    return `DATE(t.CompletedDateTime) BETWEEN '${startDate}' AND '${endDate}'`;
+    return `DATE(${col}) BETWEEN '${startDate}' AND '${endDate}'`;
   switch (period) {
-    case 'today':     return `DATE(t.CompletedDateTime) = CURRENT_DATE()`;
-    case 'yesterday': return `DATE(t.CompletedDateTime) = DATE_ADD(CURRENT_DATE(), -1)`;
+    case 'today':     return `DATE(${col}) = CURRENT_DATE()`;
+    case 'yesterday': return `DATE(${col}) = DATE_ADD(CURRENT_DATE(), -1)`;
     case 'last_week':
-      return `DATE(t.CompletedDateTime) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(t.CompletedDateTime) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
+      return `DATE(${col}) >= DATE_ADD(DATE_TRUNC('WEEK', CURRENT_DATE()), -7) AND DATE(${col}) < DATE_TRUNC('WEEK', CURRENT_DATE())`;
     case 'last_month':
-      return `DATE(t.CompletedDateTime) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(t.CompletedDateTime) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
+      return `DATE(${col}) >= DATE_TRUNC('MONTH', ADD_MONTHS(CURRENT_DATE(), -1)) AND DATE(${col}) < DATE_TRUNC('MONTH', CURRENT_DATE())`;
     case 'last_30':
-      return `DATE(t.CompletedDateTime) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(t.CompletedDateTime) < CURRENT_DATE()`;
+      return `DATE(${col}) >= DATE_SUB(CURRENT_DATE(), 30) AND DATE(${col}) < CURRENT_DATE()`;
     default:
-      return `DATE(t.CompletedDateTime) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
+      return `DATE(${col}) >= ${DATE_TRUNC[period] || DATE_TRUNC.week}`;
   }
 }
 
@@ -279,11 +280,17 @@ function computeProductivity(statusRows, channelType) {
   // all on-clock status time. On-clock % = productive ÷ clocked-in.
   const clockedInSecs = Object.values(byStatus).reduce((a, b) => a + b, 0);
   const onClockPct = clockedInSecs > 0 ? (totalSecs / clockedInSecs) * 100 : 0;
+  // Logged-in time = total time in any non-'offline' status (avg/day). Experimental
+  // alternative denominator to the hard-coded 8h expected day.
+  const loggedInSecs = Object.entries(byStatus)
+    .filter(([s]) => String(s).trim().toLowerCase() !== 'offline')
+    .reduce((a, [, secs]) => a + secs, 0);
+  const loggedInPct = loggedInSecs > 0 ? (totalSecs / loggedInSecs) * 100 : 0;
   const statusBreakdown = (statusRows ?? [])
     .map(r => ({ status: r.status, avgSecs: Number(r.avg_secs ?? 0) }))
     .sort((a, b) => b.avgSecs - a.avgSecs);
   return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct,
-           clockedInSecs, onClockPct, byStatus: statusBreakdown };
+           clockedInSecs, onClockPct, loggedInSecs, loggedInPct, byStatus: statusBreakdown };
 }
 
 function ownerWhere({ ownerIds, ownerId } = {}) {
@@ -761,21 +768,22 @@ app.get("/api/rep-detail", async (req, res) => {
              LIMIT 200`).catch(() => []),
       // 12. All completed tasks count (emails, calls, to-dos, etc.) for the Activity table header
       query(`SELECT COUNT(*) AS cnt
-             FROM ${SRC_TASK} t
-             WHERE t.OwnerId = '${ownerId}'
-               AND t.IsDeleted = 'false'
-               AND t.Status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate)}`).catch(() => []),
+             FROM ${CRM_TASK} t
+             WHERE t.task_owner_id = '${ownerId}'
+               AND t.is_deleted = false
+               AND t.task_status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}`).catch(() => []),
       // 13. Individual task rows (most recent 200) — the actual task/email sent out, with recipient
-      query(`SELECT t.Id, t.Subject, t.Description, t.TaskSubtype, t.CompletedDateTime, t.Status,
+      query(`SELECT t.task_id AS Id, t.task_subject AS Subject, t.task_description AS Description,
+                    t.task_subtype AS TaskSubtype, t.task_completed_at AS CompletedDateTime, t.task_status AS Status,
                     ct.name AS recipient_name, ct.email AS recipient_email
-             FROM ${SRC_TASK} t
-             LEFT JOIN ${CONTACT} ct ON ct.id = t.WhoId AND ct.is_current = true
-             WHERE t.OwnerId = '${ownerId}'
-               AND t.IsDeleted = 'false'
-               AND t.Status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate)}
-             ORDER BY t.CompletedDateTime DESC
+             FROM ${CRM_TASK} t
+             LEFT JOIN ${CONTACT} ct ON ct.id = t.task_who_id AND ct.is_current = true
+             WHERE t.task_owner_id = '${ownerId}'
+               AND t.is_deleted = false
+               AND t.task_status = 'Completed'
+               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}
+             ORDER BY t.task_completed_at DESC
              LIMIT 200`).catch(() => []),
     ];
 

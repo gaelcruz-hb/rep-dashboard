@@ -765,25 +765,10 @@ app.get("/api/rep-detail", async (req, res) => {
                AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}
              ORDER BY t.task_completed_at DESC
              LIMIT 200`).catch(() => []),
-      // 12. All completed tasks count (emails, calls, to-dos, etc.) for the Activity table header
-      query(`SELECT COUNT(*) AS cnt
-             FROM ${CRM_TASK} t
-             WHERE t.task_owner_id = '${ownerId}'
-               AND t.is_deleted = false
-               AND t.task_status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}`).catch(() => []),
-      // 13. Individual task rows (most recent 200) — the actual task/email sent out, with recipient
-      query(`SELECT t.task_id AS Id, t.task_subject AS Subject, t.task_description AS Description,
-                    t.task_subtype AS TaskSubtype, t.task_completed_at AS CompletedDateTime, t.task_status AS Status,
-                    ct.name AS recipient_name, ct.email AS recipient_email
-             FROM ${CRM_TASK} t
-             LEFT JOIN ${CONTACT} ct ON ct.id = t.task_who_id AND ct.is_current = true
-             WHERE t.task_owner_id = '${ownerId}'
-               AND t.is_deleted = false
-               AND t.task_status = 'Completed'
-               AND ${taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at')}
-             ORDER BY t.task_completed_at DESC
-             LIMIT 200`).catch(() => []),
+      // NOTE: the all-completed-tasks dataset for the Activity "Tasks & Emails"
+      //       table is fetched separately via `tasksPromise` (below) so it can
+      //       fall back to the legacy table and surface errors instead of
+      //       silently returning [] when the enriched table is inaccessible.
     ];
 
     // 7. Prior period closed count — only when a comparison exists
@@ -822,6 +807,66 @@ app.get("/api/rep-detail", async (req, res) => {
        ) sub
        GROUP BY status`
     ).catch(() => []);
+
+    // All-completed-tasks dataset for the Activity "Tasks & Emails" table.
+    // Try the enriched table first (used on localhost and in prod once the
+    // service principal is granted access). If that query FAILS — e.g. the
+    // deployed app's service principal lacks SELECT on prod_enriched — fall
+    // back to the legacy stage_raw.ext_crm.src_task (readable by `account
+    // users`) so the section still shows something, and surface which source
+    // was used + the error rather than silently returning an empty list.
+    const tasksPromise = (async () => {
+      const dateEnriched = taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at');
+      try {
+        const [count, rows] = await Promise.all([
+          query(`SELECT COUNT(*) AS cnt
+                 FROM ${CRM_TASK} t
+                 WHERE t.task_owner_id = '${ownerId}'
+                   AND t.is_deleted = false
+                   AND t.task_status = 'Completed'
+                   AND ${dateEnriched}`),
+          query(`SELECT t.task_id AS Id, t.task_subject AS Subject, t.task_description AS Description,
+                        t.task_subtype AS TaskSubtype, t.task_completed_at AS CompletedDateTime, t.task_status AS Status,
+                        ct.name AS recipient_name, ct.email AS recipient_email
+                 FROM ${CRM_TASK} t
+                 LEFT JOIN ${CONTACT} ct ON ct.id = t.task_who_id AND ct.is_current = true
+                 WHERE t.task_owner_id = '${ownerId}'
+                   AND t.is_deleted = false
+                   AND t.task_status = 'Completed'
+                   AND ${dateEnriched}
+                 ORDER BY t.task_completed_at DESC
+                 LIMIT 200`),
+        ]);
+        return { count, rows, source: 'enriched', error: null };
+      } catch (err) {
+        console.error(`[rep-detail] enriched task query failed for owner ${ownerId}; falling back to legacy src_task: ${err.message}`);
+        const dateLegacy = taskCompletedDateFilter(period, startDate, endDate); // defaults to t.CompletedDateTime
+        try {
+          const [count, rows] = await Promise.all([
+            query(`SELECT COUNT(*) AS cnt
+                   FROM ${SRC_TASK} t
+                   WHERE t.OwnerId = '${ownerId}'
+                     AND t.IsDeleted = 'false'
+                     AND t.Status = 'Completed'
+                     AND ${dateLegacy}`),
+            query(`SELECT t.Id, t.Subject, t.Description, t.TaskSubtype, t.CompletedDateTime, t.Status,
+                          ct.name AS recipient_name, ct.email AS recipient_email
+                   FROM ${SRC_TASK} t
+                   LEFT JOIN ${CONTACT} ct ON ct.id = t.WhoId AND ct.is_current = true
+                   WHERE t.OwnerId = '${ownerId}'
+                     AND t.IsDeleted = 'false'
+                     AND t.Status = 'Completed'
+                     AND ${dateLegacy}
+                   ORDER BY t.CompletedDateTime DESC
+                   LIMIT 200`),
+          ]);
+          return { count, rows, source: 'legacy', error: err.message };
+        } catch (err2) {
+          console.error(`[rep-detail] legacy task query also failed for owner ${ownerId}: ${err2.message}`);
+          return { count: [], rows: [], source: 'none', error: `enriched: ${err.message} | legacy: ${err2.message}` };
+        }
+      }
+    })();
 
     // Prior period — all groups (only when a natural comparison period exists)
     const priorPeriodPromise = hasPrior ? (() => {
@@ -925,8 +970,11 @@ app.get("/api/rep-detail", async (req, res) => {
        ) sub`
     ).catch(() => []);
 
-    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, emailCountRow, emailRows, taskCountRow, taskRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData] =
-      await Promise.all([Promise.all(queries), prodPromise, chatProdPromise, priorPeriodPromise]);
+    const [[cases, closedRow, avgRespRow, csatRows, avgRespAllRow, tdStatsRow, tdCallRows, mrrRows, sfChatRows, emailCountRow, emailRows, priorRow, mrrPriorRow], statusRows, chatProdRows, priorPeriodData, tasksResult] =
+      await Promise.all([Promise.all(queries), prodPromise, chatProdPromise, priorPeriodPromise, tasksPromise]);
+
+    const taskCountRow = tasksResult.count;
+    const taskRows     = tasksResult.rows;
 
 
     const mrrUpgrades = (mrrRows ?? []).map(r => ({
@@ -1037,6 +1085,8 @@ app.get("/api/rep-detail", async (req, res) => {
       taskStats: {
         totalCount: Number(taskCountRow?.[0]?.cnt ?? 0),
       },
+      tasksSource: tasksResult.source,   // 'enriched' | 'legacy' | 'none'
+      tasksError:  tasksResult.error,    // null unless the enriched query failed
       tasks: (taskRows ?? []).map(r => ({
         id:             r.Id,
         subtype:        r.TaskSubtype ?? null,

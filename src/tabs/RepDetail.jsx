@@ -378,6 +378,7 @@ export function RepDetail() {
   const emails            = detail?.emails              ?? [];
   const taskStats         = detail?.taskStats           ?? { totalCount: 0 };
   const tasks             = detail?.tasks               ?? [];
+  const tasksSource       = detail?.tasksSource         ?? 'enriched';
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -1695,7 +1696,17 @@ export function RepDetail() {
           onClick={() => setTasksExpanded(e => !e)}
           className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-surface2 transition-colors cursor-pointer"
         >
-          <span className="text-xs font-semibold text-text">Tasks & Emails</span>
+          <span className="text-xs font-semibold text-text">
+            Tasks & Emails
+            {tasksSource === 'legacy' && (
+              <span
+                className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium font-mono bg-warn/15 text-warn align-middle"
+                title="The primary task source was unavailable, so this is showing the legacy table — data may be stale."
+              >
+                legacy data
+              </span>
+            )}
+          </span>
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-muted font-mono">{periodLabel} · {detailLoading ? '…' : taskStats.totalCount} task{taskStats.totalCount !== 1 ? 's' : ''}</span>
             <span className="text-muted text-xs">{tasksExpanded ? '▲' : '▼'}</span>

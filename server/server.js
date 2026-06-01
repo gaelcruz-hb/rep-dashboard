@@ -260,6 +260,9 @@ const NOT_CLOCKOUT = `NOT (LOWER(dsu.status) = 'offline' AND ` +
 function computeProductivity(statusRows, channelType) {
   const byStatus = {};
   for (const row of statusRows ?? []) {
+    // Exclude 'offline' entirely — it should not appear in the breakdown nor
+    // count toward clocked-in time.
+    if (String(row.status).trim().toLowerCase() === 'offline') continue;
     byStatus[row.status] = Number(row.avg_secs ?? 0);
   }
   const availSecs  = byStatus['available']  || 0;
@@ -287,6 +290,7 @@ function computeProductivity(statusRows, channelType) {
   const loggedInPct = loggedInSecs > 0 ? (totalSecs / loggedInSecs) * 100 : 0;
   const statusBreakdown = (statusRows ?? [])
     .map(r => ({ status: r.status, avgSecs: Number(r.avg_secs ?? 0) }))
+    .filter(({ status }) => String(status).trim().toLowerCase() !== 'offline')
     .sort((a, b) => b.avgSecs - a.avgSecs);
   return { availSecs, onCallSecs, chatSecs, totalSecs, expectedSecs, productivityPct,
            clockedInSecs, onClockPct, loggedInSecs, loggedInPct, byStatus: statusBreakdown };
@@ -1195,6 +1199,7 @@ app.get('/api/rep-status-instances', async (req, res) => {
        WHERE LOWER(dsu.user_name) = (
          SELECT LOWER(cu.name) FROM ${USER} cu WHERE cu.id = '${ownerId}' AND cu.is_current = true LIMIT 1
        ) AND ${sf}
+         AND LOWER(dsu.status) != 'offline'
        ORDER BY dsu.status_start_at
        LIMIT 5000`
     );

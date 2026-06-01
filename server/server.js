@@ -558,7 +558,14 @@ app.get('/api/overview-rep-table', async (req, res) => {
     }
     for (const [id, v] of Object.entries(prodByRep)) {
       ensure(id, v.name);
-      repMap[id].productivitySecs = computeProductivity(v.rows, 'all').totalSecs;
+      const prod = computeProductivity(v.rows, 'all');
+      // Default productivitySecs stays the 'all' total (backward compatible);
+      // also expose the per-channel components so the Rep Summary can compute
+      // productive time per the rep's own channel type, matching Rep Details.
+      repMap[id].productivitySecs = prod.totalSecs;
+      repMap[id].availSecs  = prod.availSecs;
+      repMap[id].onCallSecs = prod.onCallSecs;
+      repMap[id].chatSecs   = prod.chatSecs;
     }
 
     const instaByRep = {};

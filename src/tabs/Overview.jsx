@@ -14,6 +14,7 @@ import { useSlaData } from '../data/useSlaData';
 import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card';
 import { AvsgCard } from '../components/ui/AvsgCard';
 import { buildHourlyChartData, HOURLY_CHART_OPTS, fmtDuration } from '../data/productivityUtils';
+import { getRepChannelType } from '../data/getRepChannelType';
 
 ChartJS.register(
   CategoryScale, LinearScale, BarElement, LineElement,
@@ -465,6 +466,17 @@ export function Overview() {
                   : r.instascore >= 85 ? '#38d9a9'
                   : r.instascore >= 75 ? '#f5a623'
                   : '#e05c5c';
+                // Productive time per the rep's own channel type, matching the
+                // Rep Details "Productive/day" calc (computeProductivity):
+                // calls → available + on a call; chats → chat (fallback to
+                // available when no chat time); else → all.
+                const _ct = getRepChannelType(r.repName);
+                const prodSecs = _ct === 'calls' ? (r.availSecs ?? 0) + (r.onCallSecs ?? 0)
+                  : _ct === 'chats' ? ((r.chatSecs ?? 0) || (r.availSecs ?? 0))
+                  : (r.availSecs ?? 0) + (r.onCallSecs ?? 0) + (r.chatSecs ?? 0);
+                // Productivity % vs an 8h expected day — matches Rep Details "vs Expected".
+                const prodPct = (prodSecs / (8 * 3600)) * 100;
+                const prodColor = prodPct >= 75 ? '#38d9a9' : prodPct >= 50 ? '#f5a623' : '#e05c5c';
                 return (
                   <tr key={i} className="hover:bg-surface2 transition-colors">
                     <td className="px-3 py-2 text-xs border-b border-border/50 font-medium whitespace-nowrap">
@@ -496,7 +508,12 @@ export function Overview() {
                         : <span className="text-muted">{r.hotCases ?? '—'}</span>}
                     </td>
                     <td className="px-3 py-2 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
-                      {r.productivitySecs > 0 ? fmtDuration(r.productivitySecs) : '—'}
+                      {prodSecs > 0 ? (
+                        <span>
+                          {fmtDuration(prodSecs)}
+                          <span className="ml-1" style={{ color: prodColor }}>({prodPct.toFixed(0)}%)</span>
+                        </span>
+                      ) : '—'}
                     </td>
                     <td className="px-3 py-2 text-xs border-b border-border/50 font-mono whitespace-nowrap" style={{ color: r.mrrTotal > 0 ? '#38d9a9' : '#6b7280' }}>
                       {r.mrrTotal > 0 ? `$${r.mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}

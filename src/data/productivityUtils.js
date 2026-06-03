@@ -10,7 +10,8 @@ export const STATUS_COLORS = {
   'email queue ':       '#e879f9',
   'email/demo':         '#e879f9',
   'break':              '#6b7280',
-  'lunch ':             '#9ca3af',
+  'lunch ':             '#fcd34d',
+  'lunch':              '#fcd34d',
   'meeting/training ':  '#4b5563',
   'meeting/training':   '#4b5563',
   'away':               '#374151',
@@ -134,6 +135,19 @@ export function fmtDurationSec(s) {
   if (h > 0) return `${h}h ${pad(m)}m`;
   if (m > 0) return `${m}m ${pad(sec)}s`;
   return `${sec}s`;
+}
+
+// Merge overlapping/abutting [start, end] intervals into a sorted, disjoint set.
+// Used to compute the true wall-clock span when chats run simultaneously.
+export function mergeIntervals(intervals) {
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [s, e] of sorted) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else out.push([s, e]);
+  }
+  return out;
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

@@ -10,11 +10,15 @@ import { useProductivityWeekly } from '../data/useProductivityWeekly';
 import { useStatusInstances } from '../data/useStatusInstances';
 import { apiFetch } from '../data/apiFetch.js';
 import { Card, CardBody } from '../components/ui/Card';
+import { Pagination } from '../components/ui/Pagination';
 import { StatusTimeline } from '../components/ui/StatusTimeline';
+import { ChatTimeline } from '../components/ui/ChatTimeline';
 import { getRepChannelType } from '../data/getRepChannelType';
-import { STATUS_COLORS, HOURLY_CHART_OPTS, WEEKLY_CHART_OPTS, buildHourlyChartData, buildWeeklyChartData, fmtDuration, statusColor } from '../data/productivityUtils';
+import { STATUS_COLORS, HOURLY_CHART_OPTS, WEEKLY_CHART_OPTS, buildHourlyChartData, buildWeeklyChartData, fmtDuration, statusColor, mergeIntervals } from '../data/productivityUtils';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+const PAGE_SIZE = 100;
 
 const SF_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Case/';
 const SF_TASK_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Task/';
@@ -53,6 +57,23 @@ function fmtSecs(s) {
   if (s == null || isNaN(s)) return '—';
   const m = Math.floor(s / 60), r = Math.round(s % 60);
   return m > 0 ? `${m}m ${r}s` : `${r}s`;
+}
+
+// Like fmtSecs, but rolls up into hours once the duration exceeds 60 minutes.
+function fmtSecsLong(s) {
+  if (s == null || isNaN(s)) return '—';
+  if (s < 3600) return fmtSecs(s);
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+// Total wall-clock time an agent was actively handling at least one chat, merging
+// overlapping [acceptTime, endTime) windows so simultaneous chats are counted once.
+function activeHandlingSecs(chats) {
+  const intervals = (chats ?? [])
+    .map(c => [Date.parse(c.acceptTime), Date.parse(c.endTime)])
+    .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s);
+  return mergeIntervals(intervals).reduce((t, [s, e]) => t + (e - s), 0) / 1000;
 }
 
 // ── Talkdesk stat card ────────────────────────────────────────────────────────
@@ -212,6 +233,9 @@ export function RepDetail() {
   const [sfChatsExpanded, setSfChatsExpanded]   = useState(false);
   const [tasksExpanded, setTasksExpanded]       = useState(false);
   const [expandedTaskId, setExpandedTaskId]     = useState(null);
+  const [tdCallsPage, setTdCallsPage]           = useState(1);
+  const [sfChatsPage, setSfChatsPage]           = useState(1);
+  const [tasksPage, setTasksPage]               = useState(1);
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
@@ -287,6 +311,13 @@ export function RepDetail() {
       .then(data => setArchivedIds(new Set(data.ids ?? [])))
       .catch(() => {});
   }, [repId]);
+
+  // Reset activity-table pagination when the underlying dataset changes (rep/period/range).
+  useEffect(() => {
+    setTdCallsPage(1);
+    setSfChatsPage(1);
+    setTasksPage(1);
+  }, [repId, periodFilter, customRangeMode, customStartDate, customEndDate, channelType]);
 
   useEffect(() => {
     if (!repId) return;
@@ -379,6 +410,13 @@ export function RepDetail() {
   const taskStats         = detail?.taskStats           ?? { totalCount: 0 };
   const tasks             = detail?.tasks               ?? [];
   const tasksSource       = detail?.tasksSource         ?? 'enriched';
+
+  // Clamp each activity-table page to its current row count, then derive the visible slice.
+  const clampPage  = (p, n) => Math.min(Math.max(1, p), Math.max(1, Math.ceil(n / PAGE_SIZE)));
+  const pageSlice  = (arr, p) => arr.slice((clampPage(p, arr.length) - 1) * PAGE_SIZE, clampPage(p, arr.length) * PAGE_SIZE);
+  const tdCallsPg  = clampPage(tdCallsPage, tdCalls.length);
+  const sfChatsPg  = clampPage(sfChatsPage, sfChats.length);
+  const tasksPg    = clampPage(tasksPage, tasks.length);
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -1121,6 +1159,13 @@ export function RepDetail() {
         <span className="text-[10px] text-muted font-mono capitalize">{channelType} rep · all statuses · {periodLabel}</span>
       </div>
       <StatusTimeline instances={statusData?.instances} loading={statusLoading} />
+
+      {/* Chat instances — per-day chat productivity timeline with concurrency lanes */}
+      <div className="flex items-center justify-between mb-3 mt-4">
+        <span className="text-xs font-semibold text-text">Chat Instances</span>
+        <span className="text-[10px] text-muted font-mono capitalize">active handling · accept→end · {periodLabel}</span>
+      </div>
+      <ChatTimeline chats={sfChats} loading={detailLoading} />
       </>)}
 
       {subTab === 'quality' && (<>
@@ -1572,6 +1617,7 @@ export function RepDetail() {
           </div>
         </button>
         {tdCallsExpanded && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -1580,13 +1626,30 @@ export function RepDetail() {
                     <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
+                {!detailLoading && tdCalls.length > 0 && (() => {
+                  const inbound = tdCalls.filter(c => String(c.callType ?? '').toLowerCase().includes('inbound')).length;
+                  const outbound = tdCalls.filter(c => String(c.callType ?? '').toLowerCase().includes('outbound')).length;
+                  const totalTalk = tdCalls.reduce((s, c) => s + (c.talkSecs ?? 0), 0);
+                  const totalHold = tdCalls.reduce((s, c) => s + (c.holdSecs ?? 0), 0);
+                  return (
+                    <tr className="bg-surface2/60">
+                      <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-[1px] text-muted border-b border-border whitespace-nowrap">Totals</td>
+                      <td className="px-3 py-2 text-xs font-mono text-text border-b border-border whitespace-nowrap">↓ {inbound} in · ↑ {outbound} out</td>
+                      <td className="px-3 py-2 text-xs font-mono font-semibold text-text border-b border-border whitespace-nowrap">{fmtSecsLong(totalTalk)}</td>
+                      <td className="px-3 py-2 text-xs font-mono font-semibold text-text border-b border-border whitespace-nowrap">{fmtSecsLong(totalHold)}</td>
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                    </tr>
+                  );
+                })()}
               </thead>
               <tbody>
                 {detailLoading ? (
                   <tr><td colSpan={6} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading calls…</td></tr>
                 ) : tdCalls.length === 0 ? (
                   <tr><td colSpan={6} className="px-3 py-6 text-center text-muted text-xs font-mono">No calls in this period</td></tr>
-                ) : tdCalls.map((c, i) => {
+                ) : pageSlice(tdCalls, tdCallsPg).map((c, gi) => {
+                  const i = (tdCallsPg - 1) * PAGE_SIZE + gi;
                   const csatColor = c.csatScore == null ? 'text-muted'
                     : c.csatScore >= 4 ? 'text-success'
                     : c.csatScore >= 3 ? 'text-warn'
@@ -1616,6 +1679,8 @@ export function RepDetail() {
               </tbody>
             </table>
           </div>
+          <Pagination page={tdCallsPg} pageSize={PAGE_SIZE} total={tdCalls.length} onPage={setTdCallsPage} />
+          </>
         )}
       </Card>
 
@@ -1632,6 +1697,7 @@ export function RepDetail() {
           </div>
         </button>
         {sfChatsExpanded && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -1640,14 +1706,40 @@ export function RepDetail() {
                     <th key={h} className="text-left text-[10px] font-mono uppercase tracking-[1px] text-muted px-3 py-2.5 border-b border-border whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
+                {!detailLoading && sfChats.length > 0 && (() => {
+                  const totalDuration = sfChats.reduce((s, c) => s + (c.durationSecs ?? 0), 0);
+                  const totalWait     = sfChats.reduce((s, c) => s + (c.waitSecs ?? 0), 0);
+                  const activeSecs    = activeHandlingSecs(sfChats);
+                  return (
+                    <tr className="bg-surface2/60">
+                      <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-[1px] text-muted border-b border-border whitespace-nowrap">Totals</td>
+                      <td className="px-3 py-2 text-xs font-mono font-semibold text-text border-b border-border whitespace-nowrap">
+                        {fmtSecsLong(totalDuration)}
+                        <span
+                          className="block text-[10px] text-muted font-normal"
+                          title="Active handling time (accept→end) with simultaneous chats counted once"
+                        >
+                          active {fmtSecsLong(activeSecs)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs font-mono font-semibold text-text border-b border-border whitespace-nowrap">{fmtSecsLong(totalWait)}</td>
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                      <td className="px-3 py-2 border-b border-border" />
+                    </tr>
+                  );
+                })()}
               </thead>
               <tbody>
                 {detailLoading ? (
                   <tr><td colSpan={9} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading chats…</td></tr>
                 ) : sfChats.length === 0 ? (
                   <tr><td colSpan={9} className="px-3 py-6 text-center text-muted text-xs font-mono">No chats in this period</td></tr>
-                ) : sfChats.map((c, i) => (
-                  <tr key={c.sessionId ?? i} className="hover:bg-surface2 transition-colors">
+                ) : pageSlice(sfChats, sfChatsPg).map((c, gi) => (
+                  <tr key={c.sessionId ?? ((sfChatsPg - 1) * PAGE_SIZE + gi)} className="hover:bg-surface2 transition-colors">
                     <td className="px-3 py-2.5 text-xs border-b border-border/50 font-mono text-muted whitespace-nowrap">
                       {c.startTime ? String(c.startTime).slice(0, 16).replace('T', ' ') : '—'}
                     </td>
@@ -1687,6 +1779,8 @@ export function RepDetail() {
               </tbody>
             </table>
           </div>
+          <Pagination page={sfChatsPg} pageSize={PAGE_SIZE} total={sfChats.length} onPage={setSfChatsPage} />
+          </>
         )}
       </Card>
 
@@ -1713,6 +1807,7 @@ export function RepDetail() {
           </div>
         </button>
         {tasksExpanded && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -1727,7 +1822,8 @@ export function RepDetail() {
                   <tr><td colSpan={5} className="px-3 py-8 text-center text-muted text-xs font-mono animate-pulse">Loading tasks…</td></tr>
                 ) : tasks.length === 0 ? (
                   <tr><td colSpan={5} className="px-3 py-6 text-center text-muted text-xs font-mono">No tasks in this period</td></tr>
-                ) : tasks.map((t, i) => {
+                ) : pageSlice(tasks, tasksPg).map((t, gi) => {
+                  const i = (tasksPg - 1) * PAGE_SIZE + gi;
                   const isOpen = expandedTaskId === (t.id ?? i);
                   return (
                       <tr
@@ -1778,6 +1874,13 @@ export function RepDetail() {
               </tbody>
             </table>
           </div>
+          {!detailLoading && tasks.length < taskStats.totalCount && (
+            <div className="px-4 pt-2 text-[10px] text-warn font-mono">
+              showing first {tasks.length.toLocaleString()} of {taskStats.totalCount.toLocaleString()} (cap reached)
+            </div>
+          )}
+          <Pagination page={tasksPg} pageSize={PAGE_SIZE} total={tasks.length} onPage={setTasksPage} />
+          </>
         )}
       </Card>
 

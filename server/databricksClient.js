@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
 import { DBSQLClient } from "@databricks/sql";
+import pLimit from "p-limit";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env") });
@@ -16,6 +17,52 @@ let _cliToken         = null;
 let _cliExpiry        = 0;
 let _lastError        = null;
 let _authMethod       = null; // 'pat' | 'cli' | 'm2m' | null
+
+// Single-flight guard so concurrent callers share ONE connect attempt instead of
+// each closing + recreating the shared client (which used to abort siblings).
+let _connectPromise   = null;
+// Monotonic generation of the live connection. A query captures the gen it ran on;
+// only the first failure on that gen triggers a reconnect (later failers are no-ops).
+let _gen              = 0;
+
+// Cap concurrent Databricks statements so a burst of requests (each fanning out many
+// queries) can't overwhelm the SQL warehouse — excess queries queue inside Node.
+const MAX_CONCURRENCY = Number(process.env.DATABRICKS_MAX_CONCURRENCY) || 8;
+// Generous by design: the goal is to release a TRULY stuck session, not to fail slow-but-
+// progressing queries. A serverless SQL warehouse can take ~30-60s just to wake from idle,
+// so a tight timeout would newly break legitimate cold-start loads.
+const QUERY_TIMEOUT_MS = Number(process.env.DATABRICKS_QUERY_TIMEOUT_MS) || 90_000;
+const GRACE_CLOSE_MS   = 30_000; // let in-flight siblings finish before closing an old client
+const limit = pLimit(MAX_CONCURRENCY);
+
+// Errors that mean "the connection/auth is bad, reconnect" vs a plain query error (just throw).
+// Note: our own statement timeout (QUERY_TIMEOUT_MS) is intentionally NOT treated as a connection
+// error — a single slow query shouldn't rotate the shared connection or get retried (which would
+// double the wait under load). Genuine dead connections surface as closed/socket/reset instead.
+function isConnectionError(err) {
+  if (err?.isQueryTimeout) return false;
+  const msg = String(err?.message ?? "").toLowerCase();
+  return (
+    err?.statusCode === 401 || err?.statusCode === 403 ||
+    /\b(401|403)\b/.test(msg) ||
+    msg.includes("closed") || msg.includes("econnreset") || msg.includes("socket") ||
+    msg.includes("thrift") || msg.includes("texception") ||
+    msg.includes("connection reset") || msg.includes("connection refused")
+  );
+}
+
+// Invalidate the live connection exactly once per generation. Schedules the old client
+// to close after a grace period so queries still running on it aren't killed mid-flight.
+function invalidateConnection(gen, { clearTokens } = {}) {
+  if (gen !== _gen) return;          // someone else already rotated this connection
+  _gen += 1;
+  const stale = client;
+  _connection = null;
+  client = null;
+  _connectionExpiry = Infinity;
+  if (clearTokens) { _m2mToken = null; _cliToken = null; }
+  if (stale) setTimeout(() => { stale.close().catch(() => {}); }, GRACE_CLOSE_MS);
+}
 
 function getCliToken() {
   if (_cliToken && Date.now() < _cliExpiry - 60_000) return _cliToken;
@@ -85,30 +132,65 @@ async function getToken(host) {
 }
 
 async function getConnection() {
-  if (!client) client = new DBSQLClient();
-
+  // Proactively rotate before the token expires — go through invalidateConnection so the
+  // old client is grace-closed (not killed) and a single reconnect happens below.
   if (_connection && Date.now() > _connectionExpiry - 5 * 60_000) {
     console.log('[Databricks] Token expiring soon — reconnecting proactively...');
-    await client.close().catch(() => {});
-    client            = new DBSQLClient();
-    _connection       = null;
-    _connectionExpiry = Infinity;
-    _m2mToken         = null;
+    invalidateConnection(_gen, { clearTokens: true });
   }
 
   if (_connection) return _connection;
 
-  const host     = process.env.DATABRICKS_HOST;
-  const httpPath = process.env.DATABRICKS_HTTP_PATH;
+  // Single-flight: all concurrent callers await the same connect attempt.
+  if (_connectPromise) return _connectPromise;
 
-  if (!host || !httpPath) {
-    throw new Error("[Databricks] Missing env vars: DATABRICKS_HOST, DATABRICKS_HTTP_PATH");
+  _connectPromise = (async () => {
+    const host     = process.env.DATABRICKS_HOST;
+    const httpPath = process.env.DATABRICKS_HTTP_PATH;
+    if (!host || !httpPath) {
+      throw new Error("[Databricks] Missing env vars: DATABRICKS_HOST, DATABRICKS_HTTP_PATH");
+    }
+    const fresh = new DBSQLClient();
+    const token = await getToken(host);
+    const conn  = await fresh.connect({ host, path: httpPath, token });
+    client            = fresh;
+    _connection       = conn;
+    _connectionExpiry = _m2mExpiry || Infinity;
+    return conn;
+  })();
+
+  try {
+    return await _connectPromise;
+  } finally {
+    _connectPromise = null;
   }
+}
 
-  const token  = await getToken(host);
-  _connection  = await client.connect({ host, path: httpPath, token });
-  _connectionExpiry = _m2mExpiry || Infinity;
-  return _connection;
+// Open a session, run the statement, fetch results — with a timeout that cancels the
+// operation so a hung query releases its concurrency slot instead of blocking forever.
+async function runStatement(conn, sql) {
+  const session = await conn.openSession();
+  let op = null;
+  let timer = null;
+  try {
+    const exec = (async () => {
+      op = await session.executeStatement(sql, { runAsync: true });
+      return op.fetchAll();
+    })();
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const e = new Error(`Databricks query timed out after ${QUERY_TIMEOUT_MS}ms`);
+        e.isQueryTimeout = true;
+        reject(e);
+      }, QUERY_TIMEOUT_MS);
+    });
+    return await Promise.race([exec, timeout]);
+  } finally {
+    clearTimeout(timer);
+    await op?.cancel?.().catch(() => {});
+    await op?.close?.().catch(() => {});
+    await session.close().catch(() => {});
+  }
 }
 
 /**
@@ -117,32 +199,30 @@ async function getConnection() {
  * @returns {Promise<object[]>}
  */
 export async function query(sql) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let session = null;
-    try {
+  // Bound concurrent statements against the warehouse; excess queue here, not on Databricks.
+  return limit(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
       const conn = await getConnection();
-      session    = await conn.openSession();
-      const op   = await session.executeStatement(sql, { runAsync: true });
-      const result = await op.fetchAll();
-      await op.close();
-      _lastError = null;
-      return result;
-    } catch (err) {
-      _lastError = err.message;
-      await session?.close().catch(() => {});
-      if (attempt === 0) {
-        const is403 = err?.message?.includes("403") || err?.statusCode === 403;
-        console.warn(`[Databricks] Query failed: ${err.message} — closing client and retrying...`);
-        await client.close().catch(() => {});
-        client            = new DBSQLClient();
-        _connection       = null;
-        _connectionExpiry = Infinity;
-        if (is403) { _m2mToken = null; _cliToken = null; }
-        continue;
+      const gen  = _gen;                 // capture the generation we ran on
+      try {
+        const result = await runStatement(conn, sql);
+        _lastError = null;
+        return result;
+      } catch (err) {
+        _lastError = err.message;
+        // Only reconnect+retry for connection/auth errors — and only once per generation,
+        // so a single failure doesn't kill or stampede sibling queries.
+        if (attempt === 0 && isConnectionError(err)) {
+          const is401or403 = err?.statusCode === 401 || err?.statusCode === 403
+            || /\b(401|403)\b/.test(String(err?.message ?? ""));
+          console.warn(`[Databricks] Query failed (${err.message}) — rotating connection and retrying...`);
+          invalidateConnection(gen, { clearTokens: is401or403 });
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
-  }
+  });
 }
 
 export function getDiagnostics() {
@@ -162,8 +242,10 @@ export function getDiagnostics() {
 }
 
 export async function resetConnection() {
-  await client.close().catch(() => {});
-  client            = new DBSQLClient();
+  await client?.close().catch(() => {});
+  _gen             += 1;
+  _connectPromise   = null;
+  client            = null;
   _connection       = null;
   _connectionExpiry = Infinity;
   _m2mToken         = null;

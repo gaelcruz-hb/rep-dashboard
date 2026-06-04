@@ -20,6 +20,27 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const PAGE_SIZE = 100;
 
+// Build a CSV string from rows + column defs ({ label, get }). RFC-4180 quoting; UTF-8 BOM so
+// Excel reads accented characters correctly.
+function toCsv(rows, columns) {
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const header = columns.map(c => esc(c.label)).join(',');
+  const body = rows.map(r => columns.map(c => esc(c.get(r))).join(',')).join('\r\n');
+  return '﻿' + header + '\r\n' + body;
+}
+
+function downloadCsv(filename, csv) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 const SF_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Case/';
 const SF_TASK_BASE = 'https://joinhomebase.lightning.force.com/lightning/r/Task/';
 
@@ -236,6 +257,8 @@ export function RepDetail() {
   const [tdCallsPage, setTdCallsPage]           = useState(1);
   const [sfChatsPage, setSfChatsPage]           = useState(1);
   const [tasksPage, setTasksPage]               = useState(1);
+  const [downloadingCsv, setDownloadingCsv]     = useState(false);
+  const [taskStatus, setTaskStatus]             = useState('Completed');
   const [prodExpanded, setProdExpanded]         = useState(false);
   const [convoSortCol, setConvoSortCol]         = useState('conversation_date');
   const [convoSortDir, setConvoSortDir]         = useState('desc');
@@ -298,6 +321,7 @@ export function RepDetail() {
     customRangeMode ? customStartDate : undefined,
     customRangeMode ? customEndDate   : undefined,
     channelType,
+    taskStatus,
   );
 
   useEffect(() => {
@@ -317,7 +341,7 @@ export function RepDetail() {
     setTdCallsPage(1);
     setSfChatsPage(1);
     setTasksPage(1);
-  }, [repId, periodFilter, customRangeMode, customStartDate, customEndDate, channelType]);
+  }, [repId, periodFilter, customRangeMode, customStartDate, customEndDate, channelType, taskStatus]);
 
   useEffect(() => {
     if (!repId) return;
@@ -417,6 +441,41 @@ export function RepDetail() {
   const tdCallsPg  = clampPage(tdCallsPage, tdCalls.length);
   const sfChatsPg  = clampPage(sfChatsPage, sfChats.length);
   const tasksPg    = clampPage(tasksPage, tasks.length);
+
+  // Export email-subtype tasks to CSV for the WHOLE selected timeframe (not just the loaded/capped
+  // page). Fetches the dedicated uncapped endpoint, then builds the CSV client-side (no Message col).
+  const downloadEmailTasks = async () => {
+    if (!repId || downloadingCsv) return;
+    setDownloadingCsv(true);
+    try {
+      const params = new URLSearchParams({ ownerId: repId });
+      if (customRangeMode && customStartDate && customEndDate) {
+        params.set('startDate', customStartDate);
+        params.set('endDate', customEndDate);
+      } else {
+        params.set('period', periodFilter);
+      }
+      if (taskStatus && taskStatus !== 'Completed') params.set('taskStatus', taskStatus);
+      const res = await apiFetch(`/api/rep-email-tasks?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rows = (await res.json()).emails ?? [];
+      const slug = s => String(s ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const repName = sfRep?.name ?? rep?.name ?? activeRep ?? 'rep';
+      const csv = toCsv(rows, [
+        { label: 'Completed',       get: t => t.completedAt ? String(t.completedAt).slice(0, 16).replace('T', ' ') : '' },
+        { label: 'Type',            get: t => t.subtype },
+        { label: 'Recipient Name',  get: t => t.recipientName },
+        { label: 'Recipient Email', get: t => t.recipientEmail },
+        { label: 'Subject',         get: t => t.subject },
+      ]);
+      downloadCsv(`email-tasks-${slug(repName)}-${slug(periodLabel)}.csv`, csv);
+    } catch (e) {
+      console.error('[rep-detail] email CSV export failed:', e);
+      alert('Could not export emails — please try again.');
+    } finally {
+      setDownloadingCsv(false);
+    }
+  };
   const avgResponseHrs = detail?.avgResponseHrs != null
     ? parseFloat(detail.avgResponseHrs.toFixed(1))
     : 0;
@@ -1808,6 +1867,31 @@ export function RepDetail() {
         </button>
         {tasksExpanded && (
           <>
+          <div className="flex items-center justify-between gap-3 px-4 pt-3">
+            <label className="flex items-center gap-2 text-[10px] text-muted font-mono">
+              Status
+              <select
+                value={taskStatus}
+                onChange={e => setTaskStatus(e.target.value)}
+                className="bg-surface2 border border-border rounded px-2 py-1 text-[10px] font-mono text-text focus:outline-none focus:border-accent"
+              >
+                <option value="Completed">Completed</option>
+                <option value="all">All statuses</option>
+                <option value="Not Started">Not Started</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Waiting on someone else">Waiting on someone else</option>
+                <option value="Deferred">Deferred</option>
+              </select>
+            </label>
+            <button
+              onClick={downloadEmailTasks}
+              disabled={detailLoading || downloadingCsv}
+              title="Export all email tasks for the selected timeframe to CSV (excludes the Message column)"
+              className="px-2.5 py-1 rounded text-[10px] font-mono border border-border text-text hover:bg-surface2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {downloadingCsv ? '… Preparing CSV' : '⬇ Download Emails CSV'}
+            </button>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>

@@ -12,8 +12,8 @@ import { parseOverviewData } from '../data/parseOverviewData';
 import { useSlaData } from '../data/useSlaData';
 // import { useTalkdeskMetrics } from '../data/useTalkdeskMetrics';
 import { Card, CardHeader, CardBody, SectionHeader } from '../components/ui/Card';
-import { AvsgCard } from '../components/ui/AvsgCard';
-import { buildHourlyChartData, HOURLY_CHART_OPTS, fmtDuration } from '../data/productivityUtils';
+import { CategoryCard, StatRow, GoalRow } from '../components/ui/CategoryCard';
+import { buildHourlyChartData, HOURLY_CHART_OPTS, fmtDuration, fmtDurationSec } from '../data/productivityUtils';
 import { getRepChannelType } from '../data/getRepChannelType';
 
 ChartJS.register(
@@ -156,7 +156,7 @@ export function Overview() {
   }
 
   const {
-    avgResponseHrs, emailsToday,
+    avgResponseHrs,
     totalClosedPeriod,
     dailyLabels, dailyClosedCounts, avg7,
     wowLabels, thisWeek, lastWeek,
@@ -164,7 +164,6 @@ export function Overview() {
     statusLabels, statusCounts,
   } = parsed;
 
-  const avgProductiveSecs  = rawData?.avgProductiveSecs ?? null;
   const productivityHourly = rawData?.productivityHourly ?? [];
   const prodChartData      = buildHourlyChartData(productivityHourly);
 
@@ -292,45 +291,92 @@ export function Overview() {
     ],
   };
 
+  // ── Category-card aggregates ───────────────────────────────────────────────
+  const EXPECTED_DAILY_SECS = 8 * 3600;
+  const tdStats   = rawData?.tdStats   ?? {};
+  const chatStats = rawData?.chatStats ?? {};
+
+  // Emails SENT (completed email tasks) — matches Rep Details, scoped by the active filters.
+  const emailsSent      = rawData?.emailStats?.sentCount  ?? 0;
+  const emailActiveDays = rawData?.emailStats?.activeDays ?? 0;
+  const emailAvgPerDay  = emailActiveDays ? emailsSent / emailActiveDays : 0;
+
+  // Instascore avg / highest / lowest (from per-rep rows, non-null only).
+  let instaHi = null, instaLo = null, instaSum = 0, instaN = 0, scoredConvos = 0;
+  for (const r of repRows) {
+    scoredConvos += r.scoredConvos ?? 0;
+    if (r.instascore == null) continue;
+    instaSum += r.instascore; instaN += 1;
+    if (!instaHi || r.instascore > instaHi.instascore) instaHi = r;
+    if (!instaLo || r.instascore < instaLo.instascore) instaLo = r;
+  }
+  const instaAvg = instaN ? instaSum / instaN : null;
+
+  // Productivity % = mean of per-rep percentages, over reps active in that channel.
+  const meanPct = vals => vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  const callProdPct = meanPct(repRows.map(r => (r.onCallSecs ?? 0) + (r.availSecs ?? 0)).filter(s => s > 0).map(s => s / EXPECTED_DAILY_SECS * 100));
+  const chatProdPct = meanPct(repRows.map(r => r.chatSecs ?? 0).filter(s => s > 0).map(s => s / EXPECTED_DAILY_SECS * 100));
+  const prodStatus  = pct => pct == null ? 'danger' : pct >= 75 ? 'success' : pct >= 50 ? 'warn' : 'danger';
+
+  const respOk    = avgResponseHrs != null && avgResponseHrs <= goals.responseHrs;
+  const respPct   = goals.responseHrs > 0 ? Math.min(100, (goals.responseHrs / Math.max(avgResponseHrs, 0.01)) * 100) : 0;
+  const instaStatus = instaAvg == null ? 'danger' : instaAvg >= goals.instascore ? 'success' : instaAvg >= goals.instascore - 10 ? 'warn' : 'danger';
+
   return (
     <div>
       {/* ── Activity vs Goals ── */}
       <SectionHeader title={`Activity vs Goals — ${periodLabel}`} />
-      <div className="grid gap-3.5 mb-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-        <AvsgCard label="Total Closed"  val={totalClosedPeriod}  goal={goals.closedDay}    higher="good" />
-        <AvsgCard label="Avg Response"  val={avgResponseHrs}     goal={goals.responseHrs}  unit="h" higher="bad" />
-        <AvsgCard label="Total Emails"  val={emailsToday}        goal={goals.emailsDay}    higher="good" />
-        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
-          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Avg Productive Time</div>
-          <div className="text-2xl font-bold font-mono leading-none mb-1">
-            {loading ? '…' : (avgProductiveSecs ? fmtDuration(avgProductiveSecs) : '—')}
-          </div>
-          <div className="text-[10px] text-muted mt-1">avg per rep / day</div>
+      <div className="flex flex-wrap gap-4 mb-5 items-stretch">
+        {/* Column 1 — Salesforce */}
+        <div className="flex-1 min-w-[260px] flex">
+          <CategoryCard className="flex-1" color="#5b8af5" label="Salesforce" hero={totalClosedPeriod.toLocaleString()} heroSub="closed">
+            <GoalRow label="Avg Response" value={`${avgResponseHrs.toFixed(1)}h`} pct={respPct} status={respOk ? 'success' : 'danger'} />
+            {statusLabels.map((s, i) => (
+              <StatRow key={s} label={s} value={(statusCounts[i] ?? 0).toLocaleString()} />
+            ))}
+          </CategoryCard>
         </div>
-        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-accent" />
-          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Total Calls</div>
-          <div className="text-2xl font-bold font-mono leading-none mb-1">
-            {loading ? '…' : totalCalls.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted mt-1">{periodLabel}</div>
+
+        {/* Column 2 — Talkdesk */}
+        <div className="flex-1 min-w-[260px] flex">
+          <CategoryCard className="flex-1" color="#f5a623" label="Talkdesk" hero={totalCalls.toLocaleString()} heroSub="calls">
+            <StatRow label="Inbound"  value={(tdStats.inbound ?? 0).toLocaleString()} />
+            <StatRow label="Outbound" value={(tdStats.outbound ?? 0).toLocaleString()} />
+            <StatRow label="Missed"   value={(tdStats.missed ?? 0).toLocaleString()} valueClass={tdStats.missed > 0 ? 'text-danger' : 'text-muted'} />
+            <StatRow label="Avg Talk" value={tdStats.avgTalkSecs != null ? fmtDurationSec(tdStats.avgTalkSecs) : '—'} />
+            <StatRow label="Avg Hold" value={tdStats.avgHoldSecs != null ? fmtDurationSec(tdStats.avgHoldSecs) : '—'} />
+            <StatRow label="Avg CSAT" value={tdStats.avgCsat != null ? `${tdStats.avgCsat.toFixed(1)} (${tdStats.csatCount})` : '—'} />
+            <GoalRow label="Call Productivity" value={callProdPct != null ? `${callProdPct.toFixed(1)}%` : '—'} pct={callProdPct ?? 0} status={prodStatus(callProdPct)} />
+          </CategoryCard>
         </div>
-        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ backgroundColor: '#38d9a9' }} />
-          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">Total Chats</div>
-          <div className="text-2xl font-bold font-mono leading-none mb-1" style={{ color: '#38d9a9' }}>
-            {loading ? '…' : totalChats.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted mt-1">{periodLabel}</div>
+
+        {/* Column 3 — Emails over Chat */}
+        <div className="flex-1 min-w-[260px] flex flex-col gap-4">
+          <CategoryCard color="#e05c5c" label="Emails" hero={emailsSent.toLocaleString()} heroSub="sent">
+            <StatRow label="Avg / Day"   value={emailAvgPerDay ? emailAvgPerDay.toFixed(1) : '—'} />
+            <StatRow label="Active Days" value={emailActiveDays.toLocaleString()} />
+          </CategoryCard>
+          <CategoryCard className="flex-1" color="#38d9a9" label="Chat" hero={totalChats.toLocaleString()} heroSub="chats">
+            <StatRow label="Avg Handle" value={chatStats.avgHandleSecs != null ? fmtDurationSec(chatStats.avgHandleSecs) : '—'} />
+            <StatRow label="Avg Wait"   value={chatStats.avgWaitSecs   != null ? fmtDurationSec(chatStats.avgWaitSecs)   : '—'} />
+            <GoalRow label="Chat Productivity" value={chatProdPct != null ? `${chatProdPct.toFixed(1)}%` : '—'} pct={chatProdPct ?? 0} status={prodStatus(chatProdPct)} />
+          </CategoryCard>
         </div>
-        <div className="bg-surface border border-border rounded-[10px] px-4 py-3.5 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-success" />
-          <div className="text-[10px] text-muted font-mono uppercase tracking-[1px] mb-1.5">MRR Added</div>
-          <div className="text-2xl font-bold font-mono leading-none mb-1 text-success">
-            {loading ? '…' : `$${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          </div>
-          <div className="text-[10px] text-muted mt-1">{loading ? '' : `${mrrUpgradeCount} upgrade${mrrUpgradeCount !== 1 ? 's' : ''}`}</div>
+
+        {/* Column 4 — Level AI over MRR */}
+        <div className="flex-1 min-w-[260px] flex flex-col gap-4">
+          <CategoryCard color="#a855f7" label="Level AI" hero={instaAvg != null ? `${instaAvg.toFixed(1)}%` : '—'} heroSub="avg instascore">
+            <GoalRow label="Avg Instascore" value={instaAvg != null ? `${instaAvg.toFixed(1)}%` : '—'} pct={instaAvg != null && goals.instascore > 0 ? (instaAvg / goals.instascore) * 100 : 0} status={instaStatus} />
+            <StatRow label="Highest" value={instaHi ? `${instaHi.instascore.toFixed(0)}% · ${instaHi.repName}` : '—'} valueClass="text-success" />
+            <StatRow label="Lowest"  value={instaLo ? `${instaLo.instascore.toFixed(0)}% · ${instaLo.repName}` : '—'} valueClass="text-danger" />
+            <StatRow label="Conversations Scored" value={scoredConvos.toLocaleString()} />
+          </CategoryCard>
+          <CategoryCard className="flex-1" color="#38d9a9" label="MRR Added" hero={`$${mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} heroSub={periodLabel}>
+            <StatRow label="Upgrades" value={mrrUpgradeCount.toLocaleString()} />
+            {mrrWithData[0] && (
+              <StatRow label="Top Contributor" value={`$${mrrWithData[0].mrrTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} · ${mrrWithData[0].repName}`} valueClass="text-success" />
+            )}
+          </CategoryCard>
         </div>
       </div>
 

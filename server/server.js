@@ -251,21 +251,35 @@ function taskCompletedDateFilter(period, startDate, endDate, col = 't.CompletedD
 // Row cap for the returned task/email lists — the UI paginates these client-side (100/page).
 // The COUNT queries are separate, so totals stay accurate even when the list is capped here.
 const TASK_ROW_CAP = Number(process.env.TASK_ROW_CAP) || 2000;
-async function fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly, dateFilterE, dateFilterL, countOnly = false }) {
+// Allowlist for the task-status filter — keeps the value out of raw SQL. Unknown → 'Completed'.
+const TASK_STATUSES = ['Completed', 'Not Started', 'In Progress', 'Waiting on someone else', 'Deferred', 'all'];
+const normalizeTaskStatus = s => TASK_STATUSES.includes(s) ? s : 'Completed';
+
+// `emailOnly` filters to email-subtype rows; `shape` picks the display columns/join independently
+// ('case' → case number/subject, 'recipient' → contact name/email). `cap` bounds the returned row
+// list (pass null for the full timeframe, e.g. CSV export). `status` filters task status —
+// 'Completed' (default), a specific value, or 'all' to include every status. Defaults preserve
+// prior behavior.
+async function fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly, shape, cap = TASK_ROW_CAP, dateFilterE, dateFilterL, countOnly = false, status = 'Completed' }) {
+  const useCase = (shape ?? (emailOnly ? 'case' : 'recipient')) === 'case';
+  const limitClause = cap ? `LIMIT ${cap}` : '';
   const dE = dateFilterE ?? taskCompletedDateFilter(period, startDate, endDate, 't.task_completed_at');
   const dL = dateFilterL ?? taskCompletedDateFilter(period, startDate, endDate, 't.CompletedDateTime');
   const subE = emailOnly ? "AND LOWER(t.task_subtype) = 'email'" : '';
   const subL = emailOnly ? "AND LOWER(t.TaskSubtype) = 'email'" : '';
-  const whereE = `t.task_owner_id = '${ownerId}' AND t.is_deleted = false AND t.task_status = 'Completed' ${subE} AND ${dE}`;
-  const whereL = `t.OwnerId = '${ownerId}' AND t.IsDeleted = 'false' AND t.Status = 'Completed' ${subL} AND ${dL}`;
+  // 'all' drops the status predicate; otherwise filter to the exact status (allowlisted by callers).
+  const statE = status === 'all' ? '' : `AND t.task_status = '${status}'`;
+  const statL = status === 'all' ? '' : `AND t.Status = '${status}'`;
+  const whereE = `t.task_owner_id = '${ownerId}' AND t.is_deleted = false ${statE} ${subE} AND ${dE}`;
+  const whereL = `t.OwnerId = '${ownerId}' AND t.IsDeleted = 'false' ${statL} ${subL} AND ${dL}`;
 
-  // Display columns differ: emails join CASE (case number/subject), tasks join CONTACT (recipient).
-  const mergedSelect = emailOnly
+  // Display columns differ: 'case' shape joins CASE (case number/subject), 'recipient' joins CONTACT.
+  const mergedSelect = useCase
     ? `u.id AS Id, u.subject AS Subject, u.completed_at AS CompletedDateTime, u.status AS Status,
        u.subtype AS TaskSubtype, u.what_id AS case_id, c.casenumber AS case_number, c.subject AS case_subject`
     : `u.id AS Id, u.subject AS Subject, u.description AS Description, u.subtype AS TaskSubtype,
        u.completed_at AS CompletedDateTime, u.status AS Status, ct.name AS recipient_name, ct.email AS recipient_email`;
-  const mergedJoin = emailOnly
+  const mergedJoin = useCase
     ? `LEFT JOIN ${CASE} c ON c.id = u.what_id AND c.is_current = true`
     : `LEFT JOIN ${CONTACT} ct ON ct.id = u.who_id AND ct.is_current = true`;
 
@@ -290,7 +304,7 @@ async function fetchCompletedTasks({ ownerId, period, startDate, endDate, emailO
       SELECT * FROM unioned QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY pref) = 1
     )
     SELECT ${mergedSelect} FROM deduped u ${mergedJoin}
-    ORDER BY u.completed_at DESC LIMIT ${TASK_ROW_CAP}`;
+    ORDER BY u.completed_at DESC ${limitClause}`;
   try {
     const [count, rows = []] = await Promise.all(countOnly ? [query(countMerged)] : [query(countMerged), query(rowsMerged)]);
     return { count, rows, source: 'merged', error: null };
@@ -300,18 +314,18 @@ async function fetchCompletedTasks({ ownerId, period, startDate, endDate, emailO
 
   // 2) Fallback: enriched only.
   try {
-    const sel = emailOnly
+    const sel = useCase
       ? `t.task_id AS Id, t.task_subject AS Subject, t.task_completed_at AS CompletedDateTime, t.task_status AS Status,
          t.task_subtype AS TaskSubtype, t.task_what_id AS case_id, c.casenumber AS case_number, c.subject AS case_subject`
       : `t.task_id AS Id, t.task_subject AS Subject, t.task_description AS Description, t.task_subtype AS TaskSubtype,
          t.task_completed_at AS CompletedDateTime, t.task_status AS Status, ct.name AS recipient_name, ct.email AS recipient_email`;
-    const jn = emailOnly
+    const jn = useCase
       ? `LEFT JOIN ${CASE} c ON c.id = t.task_what_id AND c.is_current = true`
       : `LEFT JOIN ${CONTACT} ct ON ct.id = t.task_who_id AND ct.is_current = true`;
     const [count, rows = []] = await Promise.all(countOnly
       ? [query(`SELECT COUNT(*) AS cnt FROM ${CRM_TASK} t WHERE ${whereE}`)]
       : [query(`SELECT COUNT(*) AS cnt FROM ${CRM_TASK} t WHERE ${whereE}`),
-         query(`SELECT ${sel} FROM ${CRM_TASK} t ${jn} WHERE ${whereE} ORDER BY t.task_completed_at DESC LIMIT ${TASK_ROW_CAP}`)]);
+         query(`SELECT ${sel} FROM ${CRM_TASK} t ${jn} WHERE ${whereE} ORDER BY t.task_completed_at DESC ${limitClause}`)]);
     return { count, rows, source: 'enriched', error: null };
   } catch (errEnriched) {
     console.error(`[rep-detail] enriched-only ${emailOnly ? 'email' : 'task'} failed for ${ownerId}; trying legacy-only: ${errEnriched.message}`);
@@ -319,18 +333,18 @@ async function fetchCompletedTasks({ ownerId, period, startDate, endDate, emailO
 
   // 3) Last resort: legacy only.
   try {
-    const sel = emailOnly
+    const sel = useCase
       ? `t.Id, t.Subject, t.CompletedDateTime, t.Status, t.TaskSubtype, t.WhatId AS case_id,
          c.casenumber AS case_number, c.subject AS case_subject`
       : `t.Id, t.Subject, t.Description, t.TaskSubtype, t.CompletedDateTime, t.Status,
          ct.name AS recipient_name, ct.email AS recipient_email`;
-    const jn = emailOnly
+    const jn = useCase
       ? `LEFT JOIN ${CASE} c ON c.id = t.WhatId AND c.is_current = true`
       : `LEFT JOIN ${CONTACT} ct ON ct.id = t.WhoId AND ct.is_current = true`;
     const [count, rows = []] = await Promise.all(countOnly
       ? [query(`SELECT COUNT(*) AS cnt FROM ${SRC_TASK} t WHERE ${whereL}`)]
       : [query(`SELECT COUNT(*) AS cnt FROM ${SRC_TASK} t WHERE ${whereL}`),
-         query(`SELECT ${sel} FROM ${SRC_TASK} t ${jn} WHERE ${whereL} ORDER BY t.CompletedDateTime DESC LIMIT ${TASK_ROW_CAP}`)]);
+         query(`SELECT ${sel} FROM ${SRC_TASK} t ${jn} WHERE ${whereL} ORDER BY t.CompletedDateTime DESC ${limitClause}`)]);
     return { count, rows, source: 'legacy', error: null };
   } catch (errLegacy) {
     console.error(`[rep-detail] legacy-only ${emailOnly ? 'email' : 'task'} also failed for ${ownerId}: ${errLegacy.message}`);
@@ -439,7 +453,26 @@ app.get("/api/overview-data", cacheRoute(CACHE_TTL_MS), async (req, res) => {
 
   try {
     const cuOw = cuOwnerWhere(p);
-    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows, callsRow, chatsRow] =
+    // Emails SENT (completed email tasks) — merged enriched+legacy, de-duped by task Id, scoped by
+    // the same owner filter & period. Matches the Rep Details methodology (NOT origin='Email' cases).
+    const ownerTaskE = ow.replace(/ownerid/g, 't.task_owner_id');
+    const ownerTaskL = ow.replace(/ownerid/g, 't.OwnerId');
+    const emailDateE = taskCompletedDateFilter(p.period, p.startDate, p.endDate, 't.task_completed_at');
+    const emailDateL = taskCompletedDateFilter(p.period, p.startDate, p.endDate, 't.CompletedDateTime');
+    const emailTasksQuery = query(`
+      SELECT COUNT(DISTINCT id) AS total, COUNT(DISTINCT day) AS active_days FROM (
+        SELECT t.task_id AS id, DATE(t.task_completed_at) AS day
+        FROM ${CRM_TASK} t
+        WHERE t.is_deleted = false AND t.task_status = 'Completed' AND LOWER(t.task_subtype) = 'email'
+          AND ${emailDateE} ${ownerTaskE}
+        UNION ALL
+        SELECT t.Id AS id, DATE(t.CompletedDateTime) AS day
+        FROM ${SRC_TASK} t
+        WHERE t.IsDeleted = 'false' AND t.Status = 'Completed' AND LOWER(t.TaskSubtype) = 'email'
+          AND ${emailDateL} ${ownerTaskL}
+      )`).catch(() => []);
+
+    const [statusRows, closedTodayRows, avgRespRows, emailsTodayRows, dailyRows, hourlyRows, totalClosedRows, prodRow, prodHourlyRows, mrrRow, mrrByRepRows, callsRow, chatsRow, emailTasksRow] =
       await Promise.all([
         query(`SELECT status AS Status, COUNT(*) AS cnt
                FROM ${CASE}
@@ -507,18 +540,30 @@ app.get("/api/overview-data", cacheRoute(CACHE_TTL_MS), async (req, res) => {
                ${cuOw}
                GROUP BY cu.name
                ORDER BY mrr_total DESC`).catch(() => []),
-        query(`SELECT COUNT(*) AS call_count
+        query(`SELECT COUNT(*) AS call_count,
+                      COUNT(CASE WHEN LOWER(t.call_type) = 'inbound'  THEN 1 END) AS inbound_calls,
+                      COUNT(CASE WHEN LOWER(t.call_type) = 'outbound' THEN 1 END) AS outbound_calls,
+                      COUNT(CASE WHEN LOWER(t.call_type) = 'missed'   THEN 1 END) AS missed_calls,
+                      AVG(CAST(t.talk_time AS DOUBLE))    AS avg_talk,
+                      AVG(CAST(t.holding_time AS DOUBLE)) AS avg_hold,
+                      AVG(CAST(t.csat_score AS DOUBLE))   AS avg_csat,
+                      COUNT(CASE WHEN t.csat_score IS NOT NULL THEN 1 END) AS csat_count
                FROM ${TD} t
                JOIN ${USER} cu ON LOWER(cu.email) = LOWER(t.user_email) AND cu.is_current = true
                WHERE ${callsDateFilter(p.period, p.startDate, p.endDate)}
                ${cuOw}`).catch(() => []),
-        query(`SELECT COUNT(*) AS chat_count
+        query(`SELECT COUNT(*) AS chat_count,
+                      AVG(CASE WHEN m.accepttime IS NOT NULL AND m.endtime IS NOT NULL
+                               THEN DATEDIFF(SECOND, m.accepttime, m.endtime) END) AS avg_handle,
+                      AVG(CASE WHEN m.accepttime IS NOT NULL
+                               THEN DATEDIFF(SECOND, m.createddate, m.accepttime) END) AS avg_wait
                FROM ${SRC_MESSAGING} m
                JOIN ${USER} cu ON cu.id = m.ownerid AND cu.is_current = true
                WHERE m.is_current = 'true'
                  AND m.channelname != 'Marketing Site Messaging'
                  AND ${sessionDateFilter(p.period, p.startDate, p.endDate)}
                ${cuOw}`).catch(() => []),
+        emailTasksQuery,
       ]);
 
     res.json({
@@ -536,6 +581,25 @@ app.get("/api/overview-data", cacheRoute(CACHE_TTL_MS), async (req, res) => {
       mrrByRep:           (mrrByRepRows ?? []).map(r => ({ repName: r.rep_name, mrrTotal: Number(r.mrr_total ?? 0), upgradeCount: Number(r.upgrade_count ?? 0) })),
       totalCalls:         Number(callsRow?.[0]?.call_count ?? 0),
       totalChats:         Number(chatsRow?.[0]?.chat_count ?? 0),
+      tdStats: {
+        callCount:    Number(callsRow?.[0]?.call_count    ?? 0),
+        inbound:      Number(callsRow?.[0]?.inbound_calls  ?? 0),
+        outbound:     Number(callsRow?.[0]?.outbound_calls ?? 0),
+        missed:       Number(callsRow?.[0]?.missed_calls   ?? 0),
+        avgTalkSecs:  callsRow?.[0]?.avg_talk != null ? Number(callsRow[0].avg_talk) : null,
+        avgHoldSecs:  callsRow?.[0]?.avg_hold != null ? Number(callsRow[0].avg_hold) : null,
+        avgCsat:      callsRow?.[0]?.avg_csat != null ? Number(callsRow[0].avg_csat) : null,
+        csatCount:    Number(callsRow?.[0]?.csat_count     ?? 0),
+      },
+      chatStats: {
+        chatCount:     Number(chatsRow?.[0]?.chat_count  ?? 0),
+        avgHandleSecs: chatsRow?.[0]?.avg_handle != null ? Number(chatsRow[0].avg_handle) : null,
+        avgWaitSecs:   chatsRow?.[0]?.avg_wait   != null ? Number(chatsRow[0].avg_wait)   : null,
+      },
+      emailStats: {
+        sentCount:  Number(emailTasksRow?.[0]?.total       ?? 0),
+        activeDays: Number(emailTasksRow?.[0]?.active_days  ?? 0),
+      },
     });
   } catch (err) {
     console.error('❌ [overview-data]', err.message);
@@ -750,6 +814,7 @@ app.get("/api/rep-detail", cacheRoute(CACHE_TTL_MS), async (req, res) => {
   const { ownerId, period = 'week', startDate, endDate, channelType = 'calls' } = req.query;
   if (!ownerId || !SFID_RE.test(ownerId))
     return res.status(400).json({ error: 'valid ownerId required' });
+  const taskStatus = normalizeTaskStatus(req.query.taskStatus);
 
   const owId  = `AND ownerid = '${ownerId}'`;
   const cl    = closedSince({ period, startDate, endDate });
@@ -909,8 +974,8 @@ app.get("/api/rep-detail", cacheRoute(CACHE_TTL_MS), async (req, res) => {
     // back to the legacy stage_raw.ext_crm.src_task (readable by `account
     // users`) so the section still shows something, and surface which source
     // was used + the error rather than silently returning an empty list.
-    const tasksPromise  = fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly: false });
-    const emailsPromise = fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly: true });
+    const tasksPromise  = fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly: false, status: taskStatus });
+    const emailsPromise = fetchCompletedTasks({ ownerId, period, startDate, endDate, emailOnly: true,  status: taskStatus });
 
     // Prior period — all groups (only when a natural comparison period exists)
     const priorPeriodPromise = hasPrior ? (() => {
@@ -1146,6 +1211,35 @@ app.get("/api/rep-detail", cacheRoute(CACHE_TTL_MS), async (req, res) => {
     });
   } catch (err) {
     console.error('❌ [rep-detail]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── GET /api/rep-email-tasks ──────────────────────────────────────────────────
+// Every email-subtype completed task for the rep over the selected timeframe (NO row cap),
+// with recipient columns — backs the "Download Emails CSV" export. Excludes the message body.
+app.get('/api/rep-email-tasks', cacheRoute(CACHE_TTL_MS), async (req, res) => {
+  const { ownerId, period = 'week', startDate, endDate } = req.query;
+  if (!ownerId || !SFID_RE.test(ownerId))
+    return res.status(400).json({ error: 'valid ownerId required' });
+  try {
+    const result = await fetchCompletedTasks({
+      ownerId, period, startDate, endDate,
+      emailOnly: true, shape: 'recipient', cap: null,   // cap:null → whole timeframe
+      status: normalizeTaskStatus(req.query.taskStatus),
+    });
+    res.json({
+      source: result.source,
+      emails: (result.rows ?? []).map(r => ({
+        completedAt:    r.CompletedDateTime,
+        subtype:        r.TaskSubtype ?? null,
+        subject:        r.Subject ?? null,
+        recipientName:  r.recipient_name ?? null,
+        recipientEmail: r.recipient_email ?? null,
+      })),
+    });
+  } catch (err) {
+    console.error('❌ [rep-email-tasks]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
